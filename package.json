@@ -1,0 +1,54 @@
+{
+  "name": "pi-finance-tracker",
+  "version": "0.1.0",
+  "description": "Pi extension: SQLite-backed personal finance tracker with a web CRUD UI and 17 LLM-callable tools",
+  "type": "module",
+  "license": "MIT",
+  "author": {
+    "name": "lutfi-zain",
+    "url": "https://github.com/lutfi-zain"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lutfi-zain/pi-finance-tracker.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lutfi-zain/pi-finance-tracker/issues"
+  },
+  "homepage": "https://github.com/lutfi-zain/pi-finance-tracker#readme",
+  "keywords": [
+    "pi",
+    "pi-extension",
+    "finance",
+    "finance-tracker",
+    "sqlite",
+    "sql.js",
+    "budget",
+    "expense-tracker",
+    "ai-agent",
+    "coding-agent"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "clean": "echo 'no build artefacts'",
+    "build": "echo 'jiti loads TypeScript directly; no build step'",
+    "check": "node --check src/index.ts || true",
+    "test": "node test/smoke.mjs"
+  },
+  "files": [
+    "src/",
+    "README.md",
+    "package.json",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "dependencies": {
+    "sql.js": "1.10.3"
+  }
+}

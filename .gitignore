@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+
+# pi runtime & finance db
+.pi/
+~/.pi/agent/finance-tracker/
+
+# test scratch
+*.tmp
+*.bak
+test/scratch/
+
+# editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*~

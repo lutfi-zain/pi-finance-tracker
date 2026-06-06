@@ -1,0 +1,1134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Finance Tracker</title>
+<style>
+  /* ── reset & tokens ────────────────────────────────────────────────── */
+  *,*::before,*::after { box-sizing: border-box; }
+  :root {
+    --bg: #0b0e14;
+    --bg-elev: #131722;
+    --bg-elev-2: #1a2030;
+    --border: #232a3d;
+    --border-strong: #2f3850;
+    --text: #e6e9f2;
+    --text-dim: #9aa3b8;
+    --text-faint: #5d6679;
+    --accent: #7c5cff;
+    --accent-2: #5b8def;
+    --income: #22c55e;
+    --expense: #ef4444;
+    --transfer: #f59e0b;
+    --danger: #f43f5e;
+    --shadow: 0 10px 40px rgba(0,0,0,.45);
+    --radius: 12px;
+  }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    background-image:
+      radial-gradient(800px 500px at 90% -10%, rgba(124,92,255,.12), transparent 60%),
+      radial-gradient(700px 400px at -10% 110%, rgba(91,141,239,.10), transparent 60%);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+  a { color: var(--accent-2); text-decoration: none; }
+  button { font: inherit; cursor: pointer; }
+
+  /* ── layout ───────────────────────────────────────────────────────── */
+  .app { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+  aside {
+    background: var(--bg-elev);
+    border-right: 1px solid var(--border);
+    padding: 24px 16px;
+    position: sticky; top: 0; height: 100vh;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    font-weight: 700; font-size: 16px;
+    padding: 0 8px 24px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+  }
+  .brand-dot {
+    width: 28px; height: 28px; border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    display: grid; place-items: center;
+    color: white; font-size: 14px; font-weight: 800;
+  }
+  nav button {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%; padding: 10px 12px; margin-bottom: 2px;
+    background: transparent; color: var(--text-dim);
+    border: 0; border-radius: 8px; text-align: left;
+    font-weight: 500;
+    transition: background .15s, color .15s;
+  }
+  nav button:hover { background: var(--bg-elev-2); color: var(--text); }
+  nav button.active {
+    background: linear-gradient(90deg, rgba(124,92,255,.18), rgba(124,92,255,.04));
+    color: var(--text);
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
+  nav .icon { width: 18px; text-align: center; opacity: .9; }
+  .footer-link {
+    position: absolute; bottom: 16px; left: 16px; right: 16px;
+    font-size: 12px; color: var(--text-faint); padding: 0 8px;
+  }
+  main { padding: 32px 40px; max-width: 1200px; }
+
+  /* ── typography ───────────────────────────────────────────────────── */
+  h1 { font-size: 24px; margin: 0 0 6px; font-weight: 700; letter-spacing: -.02em; }
+  h2 { font-size: 18px; margin: 0 0 12px; font-weight: 600; }
+  .subtitle { color: var(--text-dim); margin: 0 0 28px; }
+
+  /* ── cards & grid ─────────────────────────────────────────────────── */
+  .grid { display: grid; gap: 16px; }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 900px) { .grid-4, .grid-3 { grid-template-columns: repeat(2,1fr); } .app { grid-template-columns: 1fr; } aside { position: relative; height: auto; } }
+  @media (max-width: 600px) { .grid-4, .grid-3, .grid-2 { grid-template-columns: 1fr; } main { padding: 20px; } }
+
+  .card {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+  }
+  .stat .label { font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+  .stat .value { font-size: 24px; font-weight: 700; margin-top: 6px; letter-spacing: -.02em; }
+  .stat .value.income { color: var(--income); }
+  .stat .value.expense { color: var(--expense); }
+  .stat .value.net { color: var(--accent-2); }
+  .stat .sub { font-size: 12px; color: var(--text-faint); margin-top: 4px; }
+
+  /* ── toolbar ──────────────────────────────────────────────────────── */
+  .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+  .toolbar .spacer { flex: 1; }
+  .btn {
+    background: var(--bg-elev);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 8px 14px; font-size: 13px; font-weight: 500;
+    transition: all .15s;
+  }
+  .btn:hover { background: var(--bg-elev-2); border-color: var(--accent); }
+  .btn.primary {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    border-color: transparent;
+    color: white;
+  }
+  .btn.primary:hover { filter: brightness(1.1); }
+  .btn.danger { color: var(--danger); }
+  .btn.danger:hover { background: rgba(244,63,94,.1); border-color: var(--danger); }
+  .btn.ghost { background: transparent; border-color: transparent; }
+  .btn.small { padding: 4px 10px; font-size: 12px; }
+  .icon-btn {
+    background: transparent; border: 0;
+    color: var(--text-dim); padding: 4px 8px; border-radius: 6px;
+    font-size: 13px;
+  }
+  .icon-btn:hover { background: var(--bg-elev-2); color: var(--text); }
+  .icon-btn.danger:hover { color: var(--danger); background: rgba(244,63,94,.1); }
+
+  .input, .select, textarea.input {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 9px 12px;
+    font: inherit;
+    width: 100%;
+    transition: border-color .15s;
+  }
+  .input:focus, .select:focus, textarea.input:focus {
+    outline: 0;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(124,92,255,.18);
+  }
+  .input::placeholder { color: var(--text-faint); }
+  .search { width: 280px; }
+
+  /* ── table ────────────────────────────────────────────────────────── */
+  .table-wrap { overflow-x: auto; }
+  table.data { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.data th, table.data td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  table.data th { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-dim); font-weight: 600; }
+  table.data tr:hover td { background: rgba(255,255,255,.02); }
+  table.data td.actions { text-align: right; white-space: nowrap; }
+  .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
+  .badge.income { background: rgba(34,197,94,.15); color: var(--income); }
+  .badge.expense { background: rgba(239,68,68,.15); color: var(--expense); }
+  .badge.transfer { background: rgba(245,158,11,.15); color: var(--transfer); }
+  .tag-chip {
+    display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 11px;
+    background: var(--bg-elev-2); color: var(--text-dim); margin-right: 4px;
+    border: 1px solid var(--border);
+  }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: middle; margin-right: 6px; }
+
+  /* ── modal ────────────────────────────────────────────────────────── */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6);
+    display: grid; place-items: center; z-index: 100;
+    backdrop-filter: blur(4px);
+  }
+  .modal {
+    background: var(--bg-elev);
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    width: min(560px, calc(100vw - 32px));
+    max-height: calc(100vh - 64px);
+    overflow-y: auto;
+    box-shadow: var(--shadow);
+  }
+  .modal-header { padding: 18px 22px; border-bottom: 1px solid var(--border); display: flex; align-items: center; }
+  .modal-header h3 { margin: 0; font-size: 16px; }
+  .modal-body { padding: 22px; }
+  .modal-footer { padding: 14px 22px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; }
+  .form-row { margin-bottom: 14px; }
+  .form-row label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 6px; font-weight: 500; }
+  .form-row .help { font-size: 11px; color: var(--text-faint); margin-top: 4px; }
+  .form-row.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .form-row.row-2 .form-row { margin-bottom: 0; }
+  .err { color: var(--danger); font-size: 12px; margin-top: 6px; }
+
+  /* ── segmented control ────────────────────────────────────────────── */
+  .segmented {
+    display: inline-flex; background: var(--bg-elev-2);
+    border-radius: 8px; padding: 3px; gap: 2px;
+  }
+  .segmented button {
+    background: transparent; border: 0; color: var(--text-dim);
+    padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 500;
+  }
+  .segmented button.active { background: var(--bg-elev); color: var(--text); }
+
+  /* ── empty state ──────────────────────────────────────────────────── */
+  .empty {
+    padding: 48px 20px; text-align: center; color: var(--text-faint);
+  }
+  .empty .emoji { font-size: 36px; margin-bottom: 8px; }
+
+  /* ── toast ────────────────────────────────────────────────────────── */
+  .toast-stack { position: fixed; bottom: 20px; right: 20px; display: grid; gap: 8px; z-index: 200; }
+  .toast {
+    background: var(--bg-elev-2);
+    border: 1px solid var(--border-strong);
+    border-left: 3px solid var(--accent);
+    padding: 10px 14px; border-radius: 8px; font-size: 13px;
+    min-width: 220px;
+    animation: slideIn .2s ease;
+  }
+  .toast.error { border-left-color: var(--danger); }
+  .toast.success { border-left-color: var(--income); }
+  @keyframes slideIn { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+  /* hide scrollbars in cards */
+  .table-wrap::-webkit-scrollbar { height: 8px; }
+  .table-wrap::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="brand">
+      <div class="brand-dot">$</div>
+      <span>Finance</span>
+    </div>
+    <nav id="nav">
+      <button data-view="dashboard" class="active"><span class="icon">◐</span> Dashboard</button>
+      <button data-view="wallets"><span class="icon">▣</span> Wallets</button>
+      <button data-view="categories"><span class="icon">⌘</span> Categories</button>
+      <button data-view="tags"><span class="icon">#</span> Tags</button>
+      <button data-view="transactions"><span class="icon">⇄</span> Transactions</button>
+    </nav>
+    <div class="footer-link">
+      <span id="status-line">Loading…</span>
+    </div>
+  </aside>
+  <main id="view"></main>
+</div>
+<div id="modal-root"></div>
+<div class="toast-stack" id="toast-stack"></div>
+
+<script>
+/* ───────────────────────────────────────────────────────────────────
+   Finance Tracker — single-page app
+   ─────────────────────────────────────────────────────────────────── */
+
+const NO_DECIMAL_CCY = new Set(["JPY","KRW","IDR","VND","CLP","PYG","UGX","XAF","XOF","BIF","DJF","GNF","KMF","RWF","XPF"]);
+
+const state = {
+  view: "dashboard",
+  wallets: [], categories: [], tags: [], transactions: [],
+  txFilter: { wallet_id: "", category_id: "", tag_id: "", type: "", from: "", to: "", q: "" },
+  categoryKind: "expense",
+  loading: false,
+};
+
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+function fmt(amount_minor, currency) {
+  if (amount_minor == null) return "—";
+  const noDec = NO_DECIMAL_CCY.has((currency || "USD").toUpperCase());
+  const divisor = noDec ? 1 : 100;
+  const major = amount_minor / divisor;
+  // Use locale-aware formatting but keep it deterministic
+  const opts = { minimumFractionDigits: noDec ? 0 : 2, maximumFractionDigits: noDec ? 0 : 2 };
+  return new Intl.NumberFormat("en-US", opts).format(major) + " " + currency;
+}
+
+function signFmt(amount_minor, currency, type) {
+  const str = fmt(Math.abs(amount_minor), currency);
+  if (type === "expense") return "−" + str;
+  if (type === "income") return "+" + str;
+  return str;
+}
+
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+function toast(message, kind = "info") {
+  const el = document.createElement("div");
+  el.className = "toast " + (kind === "error" ? "error" : kind === "success" ? "success" : "");
+  el.textContent = message;
+  $("#toast-stack").appendChild(el);
+  setTimeout(() => { el.style.opacity = "0"; el.style.transform = "translateY(8px)"; }, 2400);
+  setTimeout(() => el.remove(), 2800);
+}
+
+async function api(method, path, body) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) {
+    opts.headers["content-type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  }
+  const r = await fetch(path, opts);
+  const text = await r.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = { error: text }; }
+  if (!r.ok) {
+    const msg = (data && data.error) || `${r.status} ${r.statusText}`;
+    throw new Error(msg);
+  }
+  return data;
+}
+
+async function loadAll() {
+  state.loading = true;
+  try {
+    const [wallets, categories, tags, transactions, summary] = await Promise.all([
+      api("GET", "/api/wallets?include_archived=true"),
+      api("GET", "/api/categories"),
+      api("GET", "/api/tags"),
+      api("GET", "/api/transactions?limit=10"),
+      api("GET", "/api/summary"),
+    ]);
+    state.wallets = wallets;
+    state.categories = categories;
+    state.tags = tags;
+    state.recent = transactions;
+    state.summary = summary;
+    $("#status-line").textContent = `${summary.tx_count} tx · ${wallets.length} wallets · ${categories.length} categories · ${tags.length} tags`;
+  } catch (e) {
+    toast("Failed to load: " + e.message, "error");
+  } finally {
+    state.loading = false;
+  }
+}
+
+async function reloadCollection(name) {
+  const path = {
+    wallets: "/api/wallets?include_archived=true",
+    categories: "/api/categories",
+    tags: "/api/tags",
+  }[name];
+  if (!path) return;
+  state[name] = await api("GET", path);
+}
+
+/* ── navigation ─────────────────────────────────────────────────── */
+
+$$("#nav button").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    $$("#nav button").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    state.view = btn.dataset.view;
+    render();
+  });
+});
+
+/* ── dashboard ───────────────────────────────────────────────────── */
+
+function renderDashboard() {
+  const s = state.summary || { total_income_minor:0, total_expense_minor:0, net_minor:0, tx_count:0, by_wallet:[], by_category:[] };
+  const recent = state.recent || [];
+  return `
+    <h1>Dashboard</h1>
+    <p class="subtitle">Overview of your finances.</p>
+    <div class="grid grid-4" style="margin-bottom:24px">
+      <div class="card stat">
+        <div class="label">Income</div>
+        <div class="value income">+${fmt(s.total_income_minor, primaryCurrency())}</div>
+        <div class="sub">${s.tx_count} transactions total</div>
+      </div>
+      <div class="card stat">
+        <div class="label">Expense</div>
+        <div class="value expense">−${fmt(s.total_expense_minor, primaryCurrency())}</div>
+        <div class="sub">Across ${s.by_wallet.length} wallet(s)</div>
+      </div>
+      <div class="card stat">
+        <div class="label">Net</div>
+        <div class="value net">${s.net_minor < 0 ? "−" : "+"}${fmt(Math.abs(s.net_minor), primaryCurrency())}</div>
+        <div class="sub">Income − expense</div>
+      </div>
+      <div class="card stat">
+        <div class="label">Wallets</div>
+        <div class="value">${state.wallets.length}</div>
+        <div class="sub">${state.tags.length} tag(s) · ${state.categories.length} category(s)</div>
+      </div>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <h2>Wallets</h2>
+        ${s.by_wallet.length === 0
+          ? `<div class="empty"><div class="emoji">▣</div>No wallets yet.</div>`
+          : `<table class="data"><thead><tr><th>Name</th><th>Currency</th><th style="text-align:right">Balance</th></tr></thead><tbody>
+              ${s.by_wallet.map((w) => `<tr>
+                <td>${escapeHtml(w.wallet_name)}</td>
+                <td>${escapeHtml(w.currency)}</td>
+                <td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(w.balance_minor, w.currency)}</td>
+              </tr>`).join("")}
+            </tbody></table>`}
+      </div>
+      <div class="card">
+        <h2>Top categories</h2>
+        ${s.by_category.filter((c) => c.total_minor > 0).length === 0
+          ? `<div class="empty"><div class="emoji">⌘</div>No category activity yet.</div>`
+          : `<table class="data"><thead><tr><th>Category</th><th>Kind</th><th style="text-align:right">Total</th></tr></thead><tbody>
+              ${s.by_category.filter((c) => c.total_minor > 0).slice(0, 8).map((c) => `<tr>
+                <td>${escapeHtml(c.category_name)}</td>
+                <td><span class="badge ${c.kind}">${c.kind}</span></td>
+                <td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(c.total_minor, primaryCurrency())}</td>
+              </tr>`).join("")}
+            </tbody></table>`}
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h2>Recent transactions</h2>
+      ${recent.length === 0
+        ? `<div class="empty"><div class="emoji">⇄</div>No transactions yet.</div>`
+        : `<div class="table-wrap"><table class="data">
+            <thead><tr><th>When</th><th>Type</th><th>Wallet</th><th>Category</th><th>Tags</th><th>Note</th><th style="text-align:right">Amount</th></tr></thead>
+            <tbody>${recent.map(txRowHtml).join("")}</tbody>
+          </table></div>`}
+    </div>
+  `;
+}
+
+function primaryCurrency() {
+  // Use the first wallet's currency as the display currency for the dashboard.
+  return (state.wallets[0] && state.wallets[0].currency) || "USD";
+}
+
+function walletName(id) { return (state.wallets.find((w) => w.id === id) || {}).name || "—"; }
+function categoryName(id) { return (state.categories.find((c) => c.id === id) || {}).name || "—"; }
+
+function txRowHtml(tx) {
+  return `<tr>
+    <td>${escapeHtml(tx.occurred_at)}</td>
+    <td><span class="badge ${tx.type}">${tx.type}</span></td>
+    <td>${escapeHtml(walletName(tx.wallet_id))}</td>
+    <td>${tx.category_id ? escapeHtml(categoryName(tx.category_id)) : "—"}</td>
+    <td>${(tx.tag_names || []).map((n) => `<span class="tag-chip">#${escapeHtml(n)}</span>`).join("")}</td>
+    <td>${escapeHtml(tx.note || "")}</td>
+    <td style="text-align:right;font-variant-numeric:tabular-nums;color:${tx.type === "expense" ? "var(--expense)" : tx.type === "income" ? "var(--income)" : "var(--transfer)"}">${signFmt(tx.amount_minor, tx.currency, tx.type)}</td>
+  </tr>`;
+}
+
+/* ── wallets view ────────────────────────────────────────────────── */
+
+function renderWallets() {
+  return `
+    <h1>Wallets</h1>
+    <p class="subtitle">Cash, bank accounts, e-wallets, credit cards — anything that holds money.</p>
+    <div class="toolbar">
+      <button class="btn primary" id="add-wallet">+ New wallet</button>
+      <div class="spacer"></div>
+      <span style="color:var(--text-dim);font-size:13px">${state.wallets.length} total</span>
+    </div>
+    <div class="card" style="padding:0">
+      ${state.wallets.length === 0
+        ? `<div class="empty"><div class="emoji">▣</div>No wallets yet. Click <b>+ New wallet</b> to start.</div>`
+        : `<div class="table-wrap"><table class="data">
+            <thead><tr><th>Name</th><th>Currency</th><th style="text-align:right">Opening</th><th style="text-align:right">Current balance</th><th>Status</th><th></th></tr></thead>
+            <tbody>${state.wallets.map((w) => `<tr>
+              <td><span class="swatch" style="background:${escapeHtml(w.color)}"></span>${escapeHtml(w.name)}</td>
+              <td>${escapeHtml(w.currency)}</td>
+              <td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(w.opening_minor, w.currency)}</td>
+              <td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:600">${fmt(walletBalance(w.id), w.currency)}</td>
+              <td>${w.archived ? `<span class="badge" style="background:rgba(255,255,255,.05);color:var(--text-dim)">archived</span>` : ""}</td>
+              <td class="actions">
+                <button class="icon-btn" data-edit-wallet="${w.id}">Edit</button>
+                <button class="icon-btn danger" data-del-wallet="${w.id}">Delete</button>
+              </td>
+            </tr>`).join("")}
+            </tbody></table></div>`}
+    </div>
+  `;
+}
+
+function walletBalance(id) {
+  const w = state.wallets.find((x) => x.id === id);
+  if (!w) return 0;
+  const summaryRow = (state.summary && state.summary.by_wallet.find((b) => b.wallet_id === id)) || null;
+  return summaryRow ? summaryRow.balance_minor : w.opening_minor;
+}
+
+/* ── categories view ─────────────────────────────────────────────── */
+
+function renderCategories() {
+  const filtered = state.categories.filter((c) => c.kind === state.categoryKind);
+  return `
+    <h1>Categories</h1>
+    <p class="subtitle">Group transactions for reporting. Categories have a kind: income or expense.</p>
+    <div class="toolbar">
+      <div class="segmented">
+        <button data-kind="expense" class="${state.categoryKind === "expense" ? "active" : ""}">Expense</button>
+        <button data-kind="income" class="${state.categoryKind === "income" ? "active" : ""}">Income</button>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn primary" id="add-category">+ New ${state.categoryKind} category</button>
+    </div>
+    <div class="card" style="padding:0">
+      ${filtered.length === 0
+        ? `<div class="empty"><div class="emoji">⌘</div>No ${state.categoryKind} categories yet.</div>`
+        : `<div class="table-wrap"><table class="data">
+            <thead><tr><th>Name</th><th>Icon</th><th>Color</th><th style="text-align:right">Total</th><th></th></tr></thead>
+            <tbody>${filtered.map((c) => `<tr>
+              <td>${escapeHtml(c.name)}</td>
+              <td style="font-size:18px">${escapeHtml(c.icon || "•")}</td>
+              <td><span class="swatch" style="background:${escapeHtml(c.color)}"></span>${escapeHtml(c.color)}</td>
+              <td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(categoryTotal(c.id), primaryCurrency())}</td>
+              <td class="actions">
+                <button class="icon-btn" data-edit-cat="${c.id}">Edit</button>
+                <button class="icon-btn danger" data-del-cat="${c.id}">Delete</button>
+              </td>
+            </tr>`).join("")}
+            </tbody></table></div>`}
+    </div>
+  `;
+}
+
+function categoryTotal(id) {
+  const s = state.summary && state.summary.by_category.find((c) => c.category_id === id);
+  return s ? s.total_minor : 0;
+}
+
+/* ── tags view ───────────────────────────────────────────────────── */
+
+function renderTags() {
+  return `
+    <h1>Tags</h1>
+    <p class="subtitle">Free-form labels. Attach any number of tags to a transaction.</p>
+    <div class="toolbar">
+      <button class="btn primary" id="add-tag">+ New tag</button>
+      <div class="spacer"></div>
+      <span style="color:var(--text-dim);font-size:13px">${state.tags.length} total</span>
+    </div>
+    <div class="card" style="padding:0">
+      ${state.tags.length === 0
+        ? `<div class="empty"><div class="emoji">#</div>No tags yet.</div>`
+        : `<div class="table-wrap"><table class="data">
+            <thead><tr><th>Name</th><th>Color</th><th style="text-align:right">Transactions</th><th></th></tr></thead>
+            <tbody>${state.tags.map((t) => `<tr>
+              <td>${escapeHtml(t.name)}</td>
+              <td><span class="swatch" style="background:${escapeHtml(t.color)}"></span>${escapeHtml(t.color)}</td>
+              <td style="text-align:right;font-variant-numeric:tabular-nums">${tagUsage(t.id)}</td>
+              <td class="actions">
+                <button class="icon-btn" data-edit-tag="${t.id}">Edit</button>
+                <button class="icon-btn danger" data-del-tag="${t.id}">Delete</button>
+              </td>
+            </tr>`).join("")}
+            </tbody></table></div>`}
+    </div>
+  `;
+}
+
+function tagUsage(id) {
+  // Hit the API for accurate count (cheap because cached on the server)
+  return "—";
+}
+
+/* ── transactions view ───────────────────────────────────────────── */
+
+function renderTransactions() {
+  const f = state.txFilter;
+  const qs = new URLSearchParams();
+  if (f.wallet_id) qs.set("wallet_id", f.wallet_id);
+  if (f.category_id) qs.set("category_id", f.category_id);
+  if (f.tag_id) qs.set("tag_id", f.tag_id);
+  if (f.type) qs.set("type", f.type);
+  if (f.from) qs.set("from", f.from);
+  if (f.to) qs.set("to", f.to);
+  qs.set("limit", "500");
+
+  return `
+    <h1>Transactions</h1>
+    <p class="subtitle">Every money movement in one place.</p>
+    <div class="card" style="margin-bottom:16px">
+      <div class="grid grid-3">
+        <div class="form-row" style="margin:0">
+          <label>Search note / tags</label>
+          <input class="input" id="tx-q" placeholder="lunch, salary, recurring…" value="${escapeHtml(f.q)}" />
+        </div>
+        <div class="form-row" style="margin:0">
+          <label>Wallet</label>
+          <select class="select" id="tx-wallet">
+            <option value="">All wallets</option>
+            ${state.wallets.map((w) => `<option value="${w.id}" ${f.wallet_id == w.id ? "selected" : ""}>${escapeHtml(w.name)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-row" style="margin:0">
+          <label>Category</label>
+          <select class="select" id="tx-category">
+            <option value="">All categories</option>
+            ${state.categories.map((c) => `<option value="${c.id}" ${f.category_id == c.id ? "selected" : ""}>${escapeHtml(c.icon)} ${escapeHtml(c.name)} (${c.kind})</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-row" style="margin:0">
+          <label>Tag</label>
+          <select class="select" id="tx-tag">
+            <option value="">All tags</option>
+            ${state.tags.map((t) => `<option value="${t.id}" ${f.tag_id == t.id ? "selected" : ""}>#${escapeHtml(t.name)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-row" style="margin:0">
+          <label>Type</label>
+          <select class="select" id="tx-type">
+            <option value="">All types</option>
+            <option value="income" ${f.type === "income" ? "selected" : ""}>Income</option>
+            <option value="expense" ${f.type === "expense" ? "selected" : ""}>Expense</option>
+            <option value="transfer" ${f.type === "transfer" ? "selected" : ""}>Transfer</option>
+          </select>
+        </div>
+        <div class="form-row row-2" style="margin:0;display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-row" style="margin:0">
+            <label>From</label>
+            <input class="input" id="tx-from" type="date" value="${escapeHtml(f.from)}" />
+          </div>
+          <div class="form-row" style="margin:0">
+            <label>To</label>
+            <input class="input" id="tx-to" type="date" value="${escapeHtml(f.to)}" />
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <button class="btn primary" id="add-tx">+ New transaction</button>
+      <div class="spacer"></div>
+      <button class="btn ghost" id="clear-filters">Clear filters</button>
+    </div>
+    <div class="card" style="padding:0" id="tx-table">
+      <div class="empty"><div class="emoji">⏳</div>Loading…</div>
+    </div>
+  `;
+}
+
+async function loadTransactionsView() {
+  const f = state.txFilter;
+  const qs = new URLSearchParams();
+  if (f.wallet_id) qs.set("wallet_id", f.wallet_id);
+  if (f.category_id) qs.set("category_id", f.category_id);
+  if (f.tag_id) qs.set("tag_id", f.tag_id);
+  if (f.type) qs.set("type", f.type);
+  if (f.from) qs.set("from", f.from);
+  if (f.to) qs.set("to", f.to);
+  qs.set("limit", "500");
+  try {
+    const rows = await api("GET", "/api/transactions?" + qs.toString());
+    state.txView = rows;
+    renderTxTable();
+  } catch (e) {
+    $("#tx-table").innerHTML = `<div class="empty">Failed to load transactions: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderTxTable() {
+  const q = (state.txFilter.q || "").toLowerCase();
+  const rows = (state.txView || []).filter((tx) => {
+    if (!q) return true;
+    return (tx.note || "").toLowerCase().includes(q) ||
+      (tx.tag_names || []).some((n) => n.toLowerCase().includes(q));
+  });
+  const root = $("#tx-table");
+  if (rows.length === 0) {
+    root.innerHTML = `<div class="empty"><div class="emoji">⇄</div>No transactions match the current filters.</div>`;
+    return;
+  }
+  root.innerHTML = `<div class="table-wrap"><table class="data">
+    <thead><tr><th>When</th><th>Type</th><th>Wallet</th><th>Category</th><th>Tags</th><th>Note</th><th style="text-align:right">Amount</th><th></th></tr></thead>
+    <tbody>${rows.map((tx) => `<tr>
+      <td>${escapeHtml(tx.occurred_at)}</td>
+      <td><span class="badge ${tx.type}">${tx.type}</span></td>
+      <td>${escapeHtml(walletName(tx.wallet_id))}</td>
+      <td>${tx.category_id ? escapeHtml(categoryName(tx.category_id)) : "—"}</td>
+      <td>${(tx.tag_names || []).map((n) => `<span class="tag-chip">#${escapeHtml(n)}</span>`).join("")}</td>
+      <td>${escapeHtml(tx.note || "")}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;color:${tx.type === "expense" ? "var(--expense)" : tx.type === "income" ? "var(--income)" : "var(--transfer)"}">${signFmt(tx.amount_minor, tx.currency, tx.type)}</td>
+      <td class="actions">
+        <button class="icon-btn" data-edit-tx="${tx.id}">Edit</button>
+        <button class="icon-btn danger" data-del-tx="${tx.id}">Delete</button>
+      </td>
+    </tr>`).join("")}
+    </tbody></table></div>`;
+}
+
+/* ── modal helpers ───────────────────────────────────────────────── */
+
+function openModal(html) {
+  const root = $("#modal-root");
+  root.innerHTML = `<div class="modal-backdrop" id="backdrop">
+    <div class="modal" role="dialog">${html}</div>
+  </div>`;
+  $("#backdrop").addEventListener("click", (e) => {
+    if (e.target.id === "backdrop") closeModal();
+  });
+  document.addEventListener("keydown", escClose);
+}
+function escClose(e) { if (e.key === "Escape") closeModal(); }
+function closeModal() {
+  $("#modal-root").innerHTML = "";
+  document.removeEventListener("keydown", escClose);
+}
+
+/* ── wallet modal ────────────────────────────────────────────────── */
+
+function walletModal(wallet) {
+  const isEdit = !!wallet;
+  const w = wallet || { name: "", currency: primaryCurrency(), opening_minor: 0, color: "#6366f1", archived: 0 };
+  openModal(`
+    <div class="modal-header"><h3>${isEdit ? "Edit" : "New"} wallet</h3></div>
+    <div class="modal-body">
+      <form id="wallet-form">
+        <div class="form-row">
+          <label>Name</label>
+          <input class="input" name="name" required maxlength="80" value="${escapeHtml(w.name)}" />
+        </div>
+        <div class="form-row row-2">
+          <div class="form-row">
+            <label>Currency (ISO 4217)</label>
+            <input class="input" name="currency" required maxlength="8" value="${escapeHtml(w.currency)}" />
+          </div>
+          <div class="form-row">
+            <label>Color</label>
+            <input class="input" name="color" type="color" value="${escapeHtml(w.color)}" />
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Opening balance (minor units, e.g. cents)</label>
+          <input class="input" name="opening_minor" type="number" min="0" step="1" value="${w.opening_minor || 0}" />
+          <div class="help">${w.currency} × 100 = 1.00 in major units. For IDR/JPY enter the raw amount.</div>
+        </div>
+        ${isEdit ? `<div class="form-row">
+          <label><input type="checkbox" name="archived" ${w.archived ? "checked" : ""} /> Archived</label>
+        </div>` : ""}
+        <div class="err" id="wallet-err"></div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn ghost" id="cancel">Cancel</button>
+      <button class="btn primary" id="save">${isEdit ? "Save" : "Create"}</button>
+    </div>
+  `);
+  $("#cancel").addEventListener("click", closeModal);
+  $("#save").addEventListener("click", async () => {
+    const f = $("#wallet-form");
+    const data = {
+      name: f.name.value.trim(),
+      currency: f.currency.value.trim().toUpperCase(),
+      opening_minor: Number(f.opening_minor.value) || 0,
+      color: f.color.value,
+    };
+    if (!data.name) { $("#wallet-err").textContent = "Name is required"; return; }
+    if (!data.currency) { $("#wallet-err").textContent = "Currency is required"; return; }
+    try {
+      if (isEdit) {
+        data.archived = f.archived.checked ? 1 : 0;
+        await api("PUT", "/api/wallets/" + wallet.id, data);
+        toast("Wallet updated", "success");
+      } else {
+        await api("POST", "/api/wallets", data);
+        toast("Wallet created", "success");
+      }
+      await loadAll();
+      closeModal();
+      render();
+    } catch (e) { $("#wallet-err").textContent = e.message; }
+  });
+}
+
+/* ── category modal ──────────────────────────────────────────────── */
+
+function categoryModal(category) {
+  const isEdit = !!category;
+  const c = category || { name: "", kind: state.categoryKind, icon: "•", color: "#10b981" };
+  openModal(`
+    <div class="modal-header"><h3>${isEdit ? "Edit" : "New"} category</h3></div>
+    <div class="modal-body">
+      <form id="cat-form">
+        <div class="form-row">
+          <label>Name</label>
+          <input class="input" name="name" required maxlength="80" value="${escapeHtml(c.name)}" />
+        </div>
+        <div class="form-row row-2">
+          <div class="form-row">
+            <label>Kind</label>
+            <select class="select" name="kind">
+              <option value="expense" ${c.kind === "expense" ? "selected" : ""}>Expense</option>
+              <option value="income" ${c.kind === "income" ? "selected" : ""}>Income</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Icon (emoji or char)</label>
+            <input class="input" name="icon" maxlength="8" value="${escapeHtml(c.icon || "•")}" />
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Color</label>
+          <input class="input" name="color" type="color" value="${escapeHtml(c.color)}" />
+        </div>
+        <div class="err" id="cat-err"></div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn ghost" id="cancel">Cancel</button>
+      <button class="btn primary" id="save">${isEdit ? "Save" : "Create"}</button>
+    </div>
+  `);
+  $("#cancel").addEventListener("click", closeModal);
+  $("#save").addEventListener("click", async () => {
+    const f = $("#cat-form");
+    const data = {
+      name: f.name.value.trim(),
+      kind: f.kind.value,
+      icon: f.icon.value || "•",
+      color: f.color.value,
+    };
+    if (!data.name) { $("#cat-err").textContent = "Name is required"; return; }
+    try {
+      if (isEdit) {
+        await api("PUT", "/api/categories/" + category.id, data);
+        toast("Category updated", "success");
+      } else {
+        await api("POST", "/api/categories", data);
+        toast("Category created", "success");
+      }
+      await loadAll();
+      closeModal();
+      render();
+    } catch (e) { $("#cat-err").textContent = e.message; }
+  });
+}
+
+/* ── tag modal ───────────────────────────────────────────────────── */
+
+function tagModal(tag) {
+  const isEdit = !!tag;
+  const t = tag || { name: "", color: "#f59e0b" };
+  openModal(`
+    <div class="modal-header"><h3>${isEdit ? "Edit" : "New"} tag</h3></div>
+    <div class="modal-body">
+      <form id="tag-form">
+        <div class="form-row">
+          <label>Name</label>
+          <input class="input" name="name" required maxlength="60" value="${escapeHtml(t.name)}" />
+        </div>
+        <div class="form-row">
+          <label>Color</label>
+          <input class="input" name="color" type="color" value="${escapeHtml(t.color)}" />
+        </div>
+        <div class="err" id="tag-err"></div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn ghost" id="cancel">Cancel</button>
+      <button class="btn primary" id="save">${isEdit ? "Save" : "Create"}</button>
+    </div>
+  `);
+  $("#cancel").addEventListener("click", closeModal);
+  $("#save").addEventListener("click", async () => {
+    const f = $("#tag-form");
+    const data = { name: f.name.value.trim(), color: f.color.value };
+    if (!data.name) { $("#tag-err").textContent = "Name is required"; return; }
+    try {
+      if (isEdit) {
+        await api("PUT", "/api/tags/" + tag.id, data);
+        toast("Tag updated", "success");
+      } else {
+        await api("POST", "/api/tags", data);
+        toast("Tag created", "success");
+      }
+      await loadAll();
+      closeModal();
+      render();
+    } catch (e) { $("#tag-err").textContent = e.message; }
+  });
+}
+
+/* ── transaction modal ───────────────────────────────────────────── */
+
+function txModal(tx) {
+  const isEdit = !!tx;
+  const t = tx || {
+    type: "expense", wallet_id: state.wallets[0] && state.wallets[0].id,
+    category_id: state.categories.find((c) => c.kind === "expense") && state.categories.find((c) => c.kind === "expense").id,
+    amount_minor: 0, currency: (state.wallets[0] && state.wallets[0].currency) || "USD",
+    note: "", occurred_at: new Date().toISOString().slice(0, 10),
+    tag_ids: [],
+  };
+  const selectedTagIds = new Set((t.tag_ids || []).map(Number));
+
+  openModal(`
+    <div class="modal-header"><h3>${isEdit ? "Edit" : "New"} transaction</h3></div>
+    <div class="modal-body">
+      <form id="tx-form">
+        <div class="form-row row-2">
+          <div class="form-row">
+            <label>Type</label>
+            <select class="select" name="type" id="tx-type-sel">
+              <option value="expense" ${t.type === "expense" ? "selected" : ""}>Expense</option>
+              <option value="income" ${t.type === "income" ? "selected" : ""}>Income</option>
+              <option value="transfer" ${t.type === "transfer" ? "selected" : ""}>Transfer</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Wallet</label>
+            <select class="select" name="wallet_id" required>
+              ${state.wallets.map((w) => `<option value="${w.id}" ${t.wallet_id == w.id ? "selected" : ""}>${escapeHtml(w.name)} (${w.currency})</option>`).join("")}
+            </select>
+          </div>
+        </div>
+        <div class="form-row" id="cat-row">
+          <label>Category</label>
+          <select class="select" name="category_id">
+            <option value="">— None —</option>
+            ${state.categories.map((c) => `<option value="${c.id}" ${t.category_id == c.id ? "selected" : ""} data-kind="${c.kind}">${escapeHtml(c.icon)} ${escapeHtml(c.name)} (${c.kind})</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-row row-2">
+          <div class="form-row">
+            <label>Amount (minor units)</label>
+            <input class="input" name="amount_minor" type="number" min="0" step="1" required value="${t.amount_minor || 0}" />
+            <div class="help">For 12.50 USD, enter 1250. For IDR/JPY enter the raw amount (no decimals).</div>
+          </div>
+          <div class="form-row">
+            <label>Currency</label>
+            <input class="input" name="currency" required maxlength="8" value="${escapeHtml(t.currency)}" />
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Date</label>
+          <input class="input" name="occurred_at" type="date" value="${escapeHtml((t.occurred_at || "").slice(0, 10))}" />
+        </div>
+        <div class="form-row">
+          <label>Note</label>
+          <input class="input" name="note" maxlength="500" value="${escapeHtml(t.note || "")}" />
+        </div>
+        <div class="form-row">
+          <label>Tags</label>
+          <div id="tag-picker" style="display:flex;flex-wrap:wrap;gap:6px">
+            ${state.tags.length === 0 ? `<span style="color:var(--text-faint);font-size:12px">No tags yet — create one in the Tags tab.</span>` :
+              state.tags.map((tg) => `<label class="tag-chip" style="cursor:pointer;padding:5px 10px">
+                <input type="checkbox" value="${tg.id}" ${selectedTagIds.has(tg.id) ? "checked" : ""} style="margin-right:4px;vertical-align:middle">#${escapeHtml(tg.name)}
+              </label>`).join("")}
+          </div>
+        </div>
+        <div class="err" id="tx-err"></div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn ghost" id="cancel">Cancel</button>
+      <button class="btn primary" id="save">${isEdit ? "Save" : "Create"}</button>
+    </div>
+  `);
+
+  // Show/hide category picker based on type
+  const typeSel = $("#tx-type-sel");
+  const catSel = $("select[name='category_id']");
+  const catRow = $("#cat-row");
+  function syncType() {
+    if (typeSel.value === "transfer") {
+      catRow.style.display = "none";
+      catSel.value = "";
+    } else {
+      catRow.style.display = "";
+      // If current value's data-kind doesn't match type, reset
+      const opt = catSel.selectedOptions[0];
+      if (opt && opt.dataset.kind && opt.dataset.kind !== typeSel.value) {
+        catSel.value = "";
+      }
+    }
+  }
+  typeSel.addEventListener("change", syncType);
+  syncType();
+
+  $("#cancel").addEventListener("click", closeModal);
+  $("#save").addEventListener("click", async () => {
+    const f = $("#tx-form");
+    const type = f.type.value;
+    const catVal = f.category_id.value;
+    const data = {
+      wallet_id: Number(f.wallet_id.value),
+      type,
+      category_id: type === "transfer" ? null : (catVal ? Number(catVal) : null),
+      amount_minor: Number(f.amount_minor.value) || 0,
+      currency: f.currency.value.trim().toUpperCase(),
+      note: f.note.value,
+      occurred_at: f.occurred_at.value,
+      tag_ids: Array.from($$("#tag-picker input:checked")).map((cb) => Number(cb.value)),
+    };
+    if (!data.wallet_id) { $("#tx-err").textContent = "Wallet required"; return; }
+    if (data.amount_minor < 0 || !Number.isInteger(data.amount_minor)) { $("#tx-err").textContent = "Amount must be a non-negative integer (minor units)"; return; }
+    if (data.amount_minor === 0) { $("#tx-err").textContent = "Amount must be > 0"; return; }
+    if (!data.currency) { $("#tx-err").textContent = "Currency required"; return; }
+    if (type !== "transfer" && !data.category_id) { $("#tx-err").textContent = "Category required for income/expense"; return; }
+    try {
+      if (isEdit) {
+        await api("PUT", "/api/transactions/" + tx.id, data);
+        toast("Transaction updated", "success");
+      } else {
+        await api("POST", "/api/transactions", data);
+        toast("Transaction created", "success");
+      }
+      await loadAll();
+      closeModal();
+      render();
+    } catch (e) { $("#tx-err").textContent = e.message; }
+  });
+}
+
+/* ── render & wire up ────────────────────────────────────────────── */
+
+function render() {
+  const root = $("#view");
+  if (state.view === "dashboard") root.innerHTML = renderDashboard();
+  else if (state.view === "wallets") root.innerHTML = renderWallets();
+  else if (state.view === "categories") root.innerHTML = renderCategories();
+  else if (state.view === "tags") root.innerHTML = renderTags();
+  else if (state.view === "transactions") { root.innerHTML = renderTransactions(); wireTxView(); loadTransactionsView(); return; }
+  wireGlobal();
+}
+
+function wireGlobal() {
+  // View-specific buttons
+  const addWallet = $("#add-wallet");
+  if (addWallet) addWallet.addEventListener("click", () => walletModal(null));
+  const addCategory = $("#add-category");
+  if (addCategory) addCategory.addEventListener("click", () => categoryModal(null));
+  const addTag = $("#add-tag");
+  if (addTag) addTag.addEventListener("click", () => tagModal(null));
+
+  $$("[data-kind]").forEach((b) => {
+    b.addEventListener("click", () => { state.categoryKind = b.dataset.kind; render(); });
+  });
+  $$("[data-edit-wallet]").forEach((b) => b.addEventListener("click", () => {
+    const w = state.wallets.find((x) => x.id === Number(b.dataset.editWallet));
+    if (w) walletModal(w);
+  }));
+  $$("[data-del-wallet]").forEach((b) => b.addEventListener("click", async () => {
+    const id = Number(b.dataset.delWallet);
+    const w = state.wallets.find((x) => x.id === id);
+    if (!confirm(`Delete wallet "${w.name}"? This fails if the wallet has transactions.`)) return;
+    try { await api("DELETE", "/api/wallets/" + id); toast("Wallet deleted", "success"); await loadAll(); render(); }
+    catch (e) { toast(e.message, "error"); }
+  }));
+  $$("[data-edit-cat]").forEach((b) => b.addEventListener("click", () => {
+    const c = state.categories.find((x) => x.id === Number(b.dataset.editCat));
+    if (c) categoryModal(c);
+  }));
+  $$("[data-del-cat]").forEach((b) => b.addEventListener("click", async () => {
+    const id = Number(b.dataset.delCat);
+    const c = state.categories.find((x) => x.id === id);
+    if (!confirm(`Delete category "${c.name}"? Transactions will lose their category.`)) return;
+    try { await api("DELETE", "/api/categories/" + id); toast("Category deleted", "success"); await loadAll(); render(); }
+    catch (e) { toast(e.message, "error"); }
+  }));
+  $$("[data-edit-tag]").forEach((b) => b.addEventListener("click", () => {
+    const t = state.tags.find((x) => x.id === Number(b.dataset.editTag));
+    if (t) tagModal(t);
+  }));
+  $$("[data-del-tag]").forEach((b) => b.addEventListener("click", async () => {
+    const id = Number(b.dataset.delTag);
+    const t = state.tags.find((x) => x.id === id);
+    if (!confirm(`Delete tag "${t.name}"? It will be removed from all transactions.`)) return;
+    try { await api("DELETE", "/api/tags/" + id); toast("Tag deleted", "success"); await loadAll(); render(); }
+    catch (e) { toast(e.message, "error"); }
+  }));
+}
+
+function wireTxView() {
+  const bind = (id, key, transform = (v) => v) => {
+    const el = $("#" + id);
+    if (!el) return;
+    el.addEventListener("input", () => { state.txFilter[key] = transform(el.value); loadTransactionsView(); });
+  };
+  bind("tx-q", "q");
+  bind("tx-wallet", "wallet_id");
+  bind("tx-category", "category_id");
+  bind("tx-tag", "tag_id");
+  bind("tx-type", "type");
+  bind("tx-from", "from");
+  bind("tx-to", "to");
+
+  const clearBtn = $("#clear-filters");
+  if (clearBtn) clearBtn.addEventListener("click", () => {
+    state.txFilter = { wallet_id: "", category_id: "", tag_id: "", type: "", from: "", to: "", q: "" };
+    render();
+  });
+
+  const addTx = $("#add-tx");
+  if (addTx) addTx.addEventListener("click", () => txModal(null));
+
+  // Re-render table on edit/delete (delegate after data arrives)
+  const root = $("#view");
+  root.addEventListener("click", (e) => {
+    const editId = e.target.dataset && e.target.dataset.editTx;
+    const delId = e.target.dataset && e.target.dataset.delTx;
+    if (editId) {
+      const tx = (state.txView || []).find((x) => x.id === Number(editId));
+      if (tx) txModal(tx);
+    } else if (delId) {
+      const id = Number(delId);
+      if (!confirm("Delete this transaction?")) return;
+      api("DELETE", "/api/transactions/" + id).then(async () => {
+        toast("Transaction deleted", "success");
+        await loadAll();
+        render();
+      }).catch((err) => toast(err.message, "error"));
+    }
+  }, { once: false });
+}
+
+/* ── boot ────────────────────────────────────────────────────────── */
+
+(async function init() {
+  await loadAll();
+  render();
+  setInterval(loadAll, 30_000); // light polling so dashboard stays current
+})();
+</script>
+</body>
+</html>
