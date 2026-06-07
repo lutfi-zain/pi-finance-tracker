@@ -15,14 +15,18 @@ export interface SniffResult {
 
 /**
  * Allowed MIME types — referenced by routes for validation.
+ *
+ * Notes:
+ * - `audio/m4a` is intentionally omitted — `audio/mp4` is the standard type.
+ * - `audio/webm` added for WebM audio (Matroska container).
  */
 export const MIME_ALLOWLIST: ReadonlyArray<{ kind: SniffResult["kind"]; mime: string }> = [
 	{ kind: "audio", mime: "audio/mpeg" },
 	{ kind: "audio", mime: "audio/wav" },
 	{ kind: "audio", mime: "audio/mp4" },
-	{ kind: "audio", mime: "audio/m4a" },
 	{ kind: "audio", mime: "audio/ogg" },
 	{ kind: "audio", mime: "audio/flac" },
+	{ kind: "audio", mime: "audio/webm" },
 	{ kind: "image", mime: "image/jpeg" },
 	{ kind: "image", mime: "image/png" },
 	{ kind: "image", mime: "image/webp" },
@@ -162,6 +166,17 @@ export function sniffMime(first4kb: Buffer): SniffResult {
 		first4kb[3] === 0x43
 	) {
 		return { kind: "audio", mime: "audio/flac" };
+	}
+
+	// audio/webm — Matroska container (1A 45 DF A3). Also matches MKV.
+	// WebM audio is a Matroska profile with Opus/Vorbis audio.
+	if (
+		first4kb[0] === 0x1a &&
+		first4kb[1] === 0x45 &&
+		first4kb[2] === 0xdf &&
+		first4kb[3] === 0xa3
+	) {
+		return { kind: "audio", mime: "audio/webm" };
 	}
 
 	// audio/mp4/m4a — .... ftypM4A (or ftypmp42, ftypisom, etc.)

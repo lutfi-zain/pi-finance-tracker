@@ -90,7 +90,14 @@ function fmtStatusLine(): string {
 
 async function ensureServer(ctx: Pick<ExtensionContext, "ui">): Promise<ServerHandle> {
 	if (state.server) return state.server;
-	const handle = await startServer(state.db, state.port, state.hostname);
+	const mediaCfg = getMediaConfig();
+	const handle = await startServer(
+		state.db,
+		state.port,
+		state.hostname,
+		state.groqClient,
+		mediaCfg,
+	);
 	state.server = handle;
 	state.port = handle.port;
 	if (ctx.ui && typeof (ctx.ui as { setStatus?: (k: string, v: string) => void }).setStatus === "function") {
@@ -113,7 +120,11 @@ export default function (pi: ExtensionAPI) {
 		if (toolsRegistered) return;
 		toolsRegistered = true;
 		try {
-			registerTools(pi as unknown as { registerTool: (def: unknown) => void }, state.db);
+			registerTools(
+				pi as unknown as { registerTool: (def: unknown) => void },
+				state.db,
+				state.groqClient,
+			);
 		} catch (e) {
 			toolsRegistered = false;
 			throw e;
