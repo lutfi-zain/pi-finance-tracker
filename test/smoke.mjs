@@ -617,6 +617,93 @@ await test("Path traversal — GET /api/media/:id rejects bad id (regression)", 
 	assert(r.status === 404, `status=${r.status}`);
 });
 
+// ── PR 3a — Reviewer fix tests (F3, F4, F5) ──────────────────────────
+
+await test("F4 — Content-Length pre-check rejects oversized body early", async () => {
+	// Use Node.js http directly (not fetch) because fetch has issues with
+	// Content-Length mismatch when the server rejects early.
+	const http = await import("node:http");
+	const boundary = "----TestBoundary" + Math.random().toString(36).slice(2);
+	const body = Buffer.concat([
+		Buffer.from(`--${boundary}\r\n`),
+		Buffer.from(`Content-Disposition: form-data; name="file"; filename="small.jpg"\r\n`),
+		Buffer.from(`Content-Type: image/jpeg\r\n\r\n`),
+		Buffer.from([0xff, 0xd8, 0xff]), // tiny JPEG header
+		Buffer.from(`\r\n--${boundary}--\r\n`),
+	]);
+	const { status, data } = await new Promise((resolve, reject) => {
+		const req = http.request({
+			hostname: "127.0.0.1",
+			port: 15990,
+			path: "/api/media/ingest",
+			method: "POST",
+			headers: {
+				"content-type": `multipart/form-data; boundary=${boundary}`,
+				"content-length": "99999999",
+			},
+		}, (res) => {
+			let data = "";
+			res.on("data", (c) => data += c);
+			res.on("end", () => resolve({ status: res.statusCode, data }));
+		});
+		req.on("error", (e) => reject(e));
+		req.write(body);
+		req.end();
+	});
+	assert(status === 413, `expected 413, got ${status}`);
+	const json = JSON.parse(data);
+	assert(json.ok === false, "ok flag false");
+	assert(json.error.code === "file_too_large", `code=${json.error.code}`);
+});
+
+await test("F5 — GroqClient 4xx → groq_invalid_response", async () => {
+	const gc = new GroqClient(MOCK_CFG, {
+		fetch: async () => ({
+			ok: false,
+			status: 400,
+			text: async () => "bad request",
+		}),
+	});
+	const result = await gc.transcribe({ file: Buffer.alloc(10), mime: "audio/wav" });
+	assert(result.ok === false, "should fail");
+	if (!result.ok) {
+		assert(result.error.code === "groq_invalid_response",
+			`expected groq_invalid_response for 4xx, got ${result.error.code}`);
+	}
+});
+
+await test("F5 — GroqClient 5xx → groq_unavailable", async () => {
+	const gc = new GroqClient(MOCK_CFG, {
+		fetch: async () => ({
+			ok: false,
+			status: 502,
+			text: async () => "bad gateway",
+		}),
+	});
+	const result = await gc.extractImage({ file: Buffer.alloc(10), mime: "image/jpeg" });
+	assert(result.ok === false, "should fail");
+	if (!result.ok) {
+		assert(result.error.code === "groq_unavailable",
+			`expected groq_unavailable for 5xx, got ${result.error.code}`);
+	}
+});
+
+await test("F5 — GroqClient PDF structure 4xx → groq_invalid_response", async () => {
+	const gc = new GroqClient(MOCK_CFG, {
+		fetch: async () => ({
+			ok: false,
+			status: 422,
+			text: async () => "unprocessable",
+		}),
+	});
+	const result = await gc.extractPdfStructure({ text: "some pdf text", schema: {} });
+	assert(result.ok === false, "should fail");
+	if (!result.ok) {
+		assert(result.error.code === "groq_invalid_response",
+			`expected groq_invalid_response for 4xx, got ${result.error.code}`);
+	}
+});
+
 // Bulk endpoint provenance tests — need a fresh DB + server because the harness
 // `db` is closed by the persistence test that ran earlier. We bring up a dedicated
 // server for these three tests, then tear it down.

@@ -81,6 +81,10 @@ function readRawBody(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
 	return new Promise((resolve, reject) => {
 		const chunks: Buffer[] = [];
 		let total = 0;
+
+		// Register data handler first so the stream is always consumed.
+		// The Content-Length check (below) may reject early but the stream
+		// still needs to be drained to avoid ECONNRESET on the client.
 		req.on("data", (c: Buffer) => {
 			total += c.length;
 			if (total > maxBytes) {
@@ -94,6 +98,15 @@ function readRawBody(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
 		});
 		req.on("end", () => resolve(Buffer.concat(chunks)));
 		req.on("error", reject);
+
+		// Pre-check Content-Length header; reject early before buffering
+		const cl = req.headers["content-length"];
+		if (cl) {
+			const n = Number(cl);
+			if (Number.isFinite(n) && n > maxBytes) {
+				reject(Object.assign(new Error("file_too_large"), { code: "file_too_large" }));
+			}
+		}
 	});
 }
 
@@ -464,13 +477,13 @@ function buildRoutes(
 		// ── Media endpoints ─────────────────────────────────────────────
 
 		// POST /api/media/ingest — multipart file upload
-		R("POST", "/api/media/ingest", async (_req, res, _p, rawBody) => {
+		R("POST", "/api/media/ingest", async (req, res, _p, rawBody) => {
 			if (!mediaOk()) {
 				return sendMediaError(res, 503, "not_configured", "GROQ_API_KEY is not set");
 			}
 			try {
 				const body = rawBody as Buffer;
-				const ct = _req.headers["content-type"] || "";
+				const ct = req.headers["content-type"] || "";
 				const parts = parseMultipart(body, ct);
 				const filePart = parts.get("file");
 				if (!filePart || filePart.data.length === 0) {
