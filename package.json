@@ -1,6 +1,6 @@
 {
   "name": "pi-finance-tracker",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Pi extension: SQLite-backed personal finance tracker with a web CRUD UI and 17 LLM-callable tools",
   "type": "module",
   "license": "MIT",
@@ -49,6 +49,10 @@
     ]
   },
   "dependencies": {
+    "pdf-parse": "1.1.1",
     "sql.js": "1.10.3"
+  },
+  "devDependencies": {
+    "@types/pdf-parse": "1.1.4"
   }
 }
