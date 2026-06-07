@@ -4,7 +4,8 @@
  * Files are written to a temp dir with restricted permissions (0o600),
  * tracked by a ULID-like media ID, and automatically expired by a sweeper.
  *
- * Temp dir layout: `<tempDir>/<mediaId>` (single file per ID).
+ * Temp dir layout: `<tempDir>/<mediaId>` (single file per ID, plus a
+ * `<mediaId>.meta.json` sidecar with stored MIME type and kind).
  */
 
 import { mkdirSync, writeFileSync, readFileSync, unlinkSync, existsSync, chmodSync, readdirSync, statSync, rmSync } from "node:fs";
@@ -46,6 +47,39 @@ function setFilePerms(path: string): void {
 	}
 }
 
+// ── Sidecar helpers ───────────────────────────────────────────────────────
+
+interface SidecarMeta {
+	kind: "audio" | "image" | "pdf";
+	mime: string;
+	original_name?: string;
+	created_at: string;
+}
+
+function sidecarPath(mediaId: string, tempDir: string): string {
+	return join(tempDir, `${mediaId}.meta.json`);
+}
+
+function writeSidecar(mediaId: string, tempDir: string, meta: SidecarMeta): void {
+	const sp = sidecarPath(mediaId, tempDir);
+	writeFileSync(sp, JSON.stringify(meta), { mode: 0o600 });
+}
+
+function readSidecar(mediaId: string, tempDir: string): SidecarMeta | null {
+	const sp = sidecarPath(mediaId, tempDir);
+	if (!existsSync(sp)) return null;
+	try {
+		return JSON.parse(readFileSync(sp, "utf8")) as SidecarMeta;
+	} catch {
+		return null;
+	}
+}
+
+function deleteSidecar(mediaId: string, tempDir: string): void {
+	const sp = sidecarPath(mediaId, tempDir);
+	if (existsSync(sp)) unlinkSync(sp);
+}
+
 // ── Public API ───────────────────────────────────────────────────────────
 
 export interface WriteTempResult {
@@ -56,22 +90,31 @@ export interface WriteTempResult {
 
 /**
  * Write a buffer to the temp directory with 0o600 permissions.
+ * Also writes a sidecar `<mediaId>.meta.json` with the MIME type and kind.
  *
  * @param bytes - The file content.
  * @param kind  - Media kind ("audio", "image", "pdf").
- * @param opts  - tempDir base path and ttlMs for expiration.
+ * @param mime  - The detected MIME type string.
+ * @param opts  - tempDir base path and ttlMs for expiration. Optional originalName.
  * @returns The media ID, full path, and expiry timestamp.
  */
 export function writeTemp(
 	bytes: Buffer,
 	kind: "audio" | "image" | "pdf",
-	opts: { tempDir: string; ttlMs: number },
+	mime: string,
+	opts: { tempDir: string; ttlMs: number; originalName?: string },
 ): WriteTempResult {
 	ensureTempDir(opts.tempDir);
 	const mediaId = generateMediaId();
 	const filePath = join(opts.tempDir, mediaId);
 	writeFileSync(filePath, bytes, { mode: 0o600 });
 	setFilePerms(filePath);
+	writeSidecar(mediaId, opts.tempDir, {
+		kind,
+		mime,
+		original_name: opts.originalName,
+		created_at: new Date().toISOString(),
+	});
 	return {
 		mediaId,
 		path: filePath,
@@ -81,6 +124,7 @@ export function writeTemp(
 
 /**
  * Read a temp file back. Returns null if the file doesn't exist or is expired.
+ * MIME and kind are read from the sidecar `.meta.json` file.
  */
 export function readTemp(
 	mediaId: string,
@@ -91,20 +135,25 @@ export function readTemp(
 	if (!existsSync(filePath)) return null;
 
 	// Check expiry
-	const stat = statSync(filePath);
-	const age = Date.now() - stat.mtimeMs;
+	const st = statSync(filePath);
+	const age = Date.now() - st.mtimeMs;
 	if (age > ttlMs) {
 		// File is expired; caller should map to media_expired
 		return null;
 	}
 
 	const buffer = readFileSync(filePath);
-	// We don't store MIME on disk; caller re-sniffs or knows from context
-	return { buffer, mime: "application/octet-stream", kind: "unknown" };
+	// Read MIME and kind from the sidecar
+	const meta = readSidecar(mediaId, tempDir);
+	return {
+		buffer,
+		mime: meta?.mime ?? "application/octet-stream",
+		kind: meta?.kind ?? "unknown",
+	};
 }
 
 /**
- * Delete a temp file by media ID.
+ * Delete a temp file by media ID. Also removes the sidecar.
  *
  * @returns true if the file was deleted, false if it didn't exist.
  */
@@ -112,11 +161,12 @@ export function deleteTemp(mediaId: string, tempDir: string): boolean {
 	const filePath = join(tempDir, mediaId);
 	if (!existsSync(filePath)) return false;
 	unlinkSync(filePath);
+	deleteSidecar(mediaId, tempDir);
 	return true;
 }
 
 /**
- * Sweep expired temp files. Returns the count deleted.
+ * Sweep expired temp files and their sidecars. Returns the count deleted.
  */
 export function sweepExpired(tempDir: string, ttlMs: number): number {
 	if (!existsSync(tempDir)) return 0;

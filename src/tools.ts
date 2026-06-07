@@ -9,6 +9,8 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import type { FinanceDB, TxType } from "./db.js";
+import type { GroqClient } from "./groq.js";
+import type { MediaResult } from "./types.js";
 
 const TxTypeSchema = StringEnum(["income", "expense", "transfer"] as const);
 const CatKindSchema = StringEnum(["income", "expense"] as const);
@@ -131,6 +133,37 @@ export type TxCreateT = Static<typeof TxCreate>;
 export type TxUpdateT = Static<typeof TxUpdate>;
 export type TxListT = Static<typeof TxList>;
 
+// ── Media tools (PR 2) ─────────────────────────────────────────────────
+
+const MediaTranscribeAudio = Type.Object({
+	file_path: Type.Optional(Type.String({ description: "Local path to the audio file." })),
+	file_buffer_b64: Type.Optional(Type.String({ description: "Base64-encoded audio file content." })),
+	language: Type.Optional(Type.String({ description: "BCP-47 language code (e.g. 'id', 'en'). Omit for auto-detect." })),
+});
+
+const MediaExtractImage = Type.Object({
+	file_path: Type.Optional(Type.String({ description: "Local path to the image file." })),
+	file_buffer_b64: Type.Optional(Type.String({ description: "Base64-encoded image file content." })),
+	prompt: Type.Optional(Type.String({ description: "Prompt asking for a specific JSON shape (e.g. {merchant, amount, date}). Omit for freeform extraction." })),
+});
+
+const MediaExtractPdf = Type.Object({
+	file_path: Type.Optional(Type.String({ description: "Local path to the PDF file." })),
+	file_buffer_b64: Type.Optional(Type.String({ description: "Base64-encoded PDF file content." })),
+	parse_as: Type.Optional(Type.Union([Type.Literal("text"), Type.Literal("transactions")], { description: "'text' returns raw text; 'transactions' returns a list of candidate Transaction objects (requires GROQ_API_KEY)." })),
+});
+
+const MediaImportBankStatement = Type.Object({
+	file_path: Type.String({ description: "Local path to the bank-statement PDF file." }),
+	wallet_id: Type.Integer({ description: "Wallet id to associate the imported transactions with." }),
+	default_currency: Type.String({ description: "ISO 4217 currency code (e.g. 'IDR', 'USD') for transactions that don't specify one." }),
+});
+
+export type MediaTranscribeAudioT = Static<typeof MediaTranscribeAudio>;
+export type MediaExtractImageT = Static<typeof MediaExtractImage>;
+export type MediaExtractPdfT = Static<typeof MediaExtractPdf>;
+export type MediaImportBankStatementT = Static<typeof MediaImportBankStatement>;
+
 /** Pretty-print minor units as a major-unit string for LLM-friendly output. */
 function fmt(amount_minor: number, currency: string): string {
 	const noDecimal = ["JPY", "KRW", "IDR", "VND", "CLP", "PYG", "UGX", "XAF", "XOF"].includes(currency.toUpperCase());
@@ -146,7 +179,9 @@ function fmt(amount_minor: number, currency: string): string {
 export function registerTools(
 	pi: { registerTool: (def: unknown) => void },
 	db: FinanceDB,
+	groqClient?: GroqClient | null,
 ): void {
+	const mediaOk = !!(groqClient?.getConfig()?.apiKey);
 	pi.registerTool({
 		name: "finance_list_wallets",
 		label: "List Wallets",
@@ -486,6 +521,171 @@ export function registerTools(
 					.map((c) => `  #${c.category_id} ${c.category_name} [${c.kind}] = ${c.total_minor}`)
 					.join("\n");
 			return { content: [{ type: "text", text }], details: { summary: s } };
+		},
+	});
+
+	// ── Media tools (registered only if GroqClient is configured) ──────
+	if (!mediaOk) return;
+
+	pi.registerTool({
+		name: "media_transcribe_audio",
+		label: "Transcribe Audio",
+		description:
+			"Convert an audio file to text using Groq's Whisper model. Accepts a local file path or a base64-encoded buffer. Returns the transcribed text, detected language, and duration.",
+		promptSnippet: "Convert audio files to text.",
+		promptGuidelines:
+			"Use `media_transcribe_audio` when the user provides an audio file (voice memo, meeting recording) and wants the spoken content as text. Pass either a `file_path` or a base64-encoded `file_buffer_b64`. Optional `language` (BCP-47 code) to force a specific language instead of auto-detect.",
+		parameters: MediaTranscribeAudio,
+		execute: async (_id: string, p: MediaTranscribeAudioT) => {
+			const buf = p.file_buffer_b64
+				? Buffer.from(p.file_buffer_b64, "base64")
+				: p.file_path
+					? (await import("node:fs")).readFileSync(p.file_path)
+					: null;
+			if (!buf) {
+				return {
+					content: [{ type: "text", text: "No file provided. Pass file_path or file_buffer_b64." }],
+					details: { ok: false, error: { code: "upload_failed", message: "No file provided" } },
+				};
+			}
+			// Sniff MIME from magic bytes
+			const { sniffMime } = await import("./media/mime.js");
+			let mime = "audio/mpeg";
+			try {
+				const sniffed = sniffMime(buf.subarray(0, 4096));
+				mime = sniffed.mime;
+			} catch { /* use default */ }
+
+			const result = await groqClient!.transcribe({ file: buf, mime, language: p.language });
+			if (!result.ok) {
+				return { content: [{ type: "text", text: `Transcription failed: ${result.error.code} — ${result.error.message}` }], details: result };
+			}
+			return {
+				content: [{ type: "text", text: `Transcribed: ${result.data.text}` }],
+				details: { ok: true, data: result.data },
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "media_extract_image",
+		label: "Extract Image",
+		description:
+			"Extract text and structured data from an image using Groq's vision model. Accepts a local file path or a base64-encoded buffer. Optional `prompt` to request a specific JSON shape.",
+		promptSnippet: "Extract text and structure from images.",
+		promptGuidelines:
+			"Use `media_extract_image` when the user provides an image (photo of a receipt, transfer confirmation screenshot, handwritten note) and wants the text and structured fields. Pass `prompt` to ask for a specific JSON shape (e.g. {merchant, amount, date}); omit for freeform text extraction.",
+		parameters: MediaExtractImage,
+		execute: async (_id: string, p: MediaExtractImageT) => {
+			const buf = p.file_buffer_b64
+				? Buffer.from(p.file_buffer_b64, "base64")
+				: p.file_path
+					? (await import("node:fs")).readFileSync(p.file_path)
+					: null;
+			if (!buf) {
+				return {
+					content: [{ type: "text", text: "No file provided. Pass file_path or file_buffer_b64." }],
+					details: { ok: false, error: { code: "upload_failed", message: "No file provided" } },
+				};
+			}
+			const { sniffMime } = await import("./media/mime.js");
+			let mime = "image/jpeg";
+			try {
+				const sniffed = sniffMime(buf.subarray(0, 4096));
+				mime = sniffed.mime;
+			} catch { /* use default */ }
+
+			const result = await groqClient!.extractImage({ file: buf, mime, prompt: p.prompt });
+			if (!result.ok) {
+				return { content: [{ type: "text", text: `Image extraction failed: ${result.error.code} — ${result.error.message}` }], details: result };
+			}
+			return {
+				content: [{ type: "text", text: result.data.text }],
+				details: { ok: true, data: result.data },
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "media_extract_pdf",
+		label: "Extract PDF",
+		description:
+			"Extract text or structured transactions from a PDF file. For `parse_as: \"text\"`, returns the raw text. For `parse_as: \"transactions\"`, returns a list of candidate Transaction objects (requires GROQ_API_KEY).",
+		promptSnippet: "Extract text or transactions from PDFs.",
+		promptGuidelines:
+			"Use `media_extract_pdf` when the user provides a PDF (bank statement / rekening koran, invoice, e-statement). `parse_as: \"text\"` returns the raw text. `parse_as: \"transactions\"` returns a list of candidate `Transaction` objects ready for the bank-statement import flow.",
+		parameters: MediaExtractPdf,
+		execute: async (_id: string, p: MediaExtractPdfT) => {
+			const buf = p.file_buffer_b64
+				? Buffer.from(p.file_buffer_b64, "base64")
+				: p.file_path
+					? (await import("node:fs")).readFileSync(p.file_path)
+					: null;
+			if (!buf) {
+				return {
+					content: [{ type: "text", text: "No file provided. Pass file_path or file_buffer_b64." }],
+					details: { ok: false, error: { code: "upload_failed", message: "No file provided" } },
+				};
+			}
+
+			const pdfParse = (await import("pdf-parse")).default;
+			const pdfData = await pdfParse(buf);
+			const text = pdfData.text || "";
+			const pageCount = pdfData.numpages ?? 0;
+
+			if (!p.parse_as || p.parse_as === "text") {
+				return {
+					content: [{ type: "text", text: text || "(empty PDF)" }],
+					details: { ok: true, data: { text, page_count: pageCount, transactions: undefined } },
+				};
+			}
+
+			// parse_as === "transactions" — use Groq for structure
+			const result = await groqClient!.extractPdfStructure({ text, schema: {} });
+			if (!result.ok) {
+				return { content: [{ type: "text", text: `PDF extraction failed: ${result.error.code} — ${result.error.message}` }], details: result };
+			}
+			const structured = result.data.structured as any;
+			const transactions = Array.isArray(structured?.transactions) ? structured.transactions : [];
+			return {
+				content: [{ type: "text", text: `Extracted ${transactions.length} candidate transaction(s) from the PDF.` }],
+				details: { ok: true, data: { text, page_count: pageCount, transactions } },
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "media_import_bank_statement",
+		label: "Import Bank Statement",
+		description:
+			"Take a bank-statement PDF and return a list of draft transaction candidates. Uses Groq to extract structured transactions from the PDF text. Requires GROQ_API_KEY.",
+		promptSnippet: "Turn a bank-statement PDF into a list of draft transactions.",
+		promptGuidelines:
+			"Use `media_import_bank_statement` when the user uploads a bank-statement PDF and wants a list of draft transactions to confirm before creating. After getting the candidates, present them to the user; on confirmation, call `finance_create_transaction` for each (or POST `/api/transactions/bulk` for one-shot).",
+		parameters: MediaImportBankStatement,
+		execute: async (_id: string, p: MediaImportBankStatementT) => {
+			const buf = (await import("node:fs")).readFileSync(p.file_path);
+			if (!buf || buf.length === 0) {
+				return {
+					content: [{ type: "text", text: "File is empty or not found." }],
+					details: { ok: false, error: { code: "upload_failed", message: "Empty file" } },
+				};
+			}
+
+			const pdfParse = (await import("pdf-parse")).default;
+			const pdfData = await pdfParse(buf);
+			const text = pdfData.text || "";
+
+			const result = await groqClient!.extractPdfStructure({ text, schema: {} });
+			if (!result.ok) {
+				return { content: [{ type: "text", text: `Bank statement import failed: ${result.error.code} — ${result.error.message}` }], details: result };
+			}
+			const structured = result.data.structured as any;
+			const candidates = Array.isArray(structured?.transactions) ? structured.transactions : [];
+			return {
+				content: [{ type: "text", text: `Found ${candidates.length} candidate transaction(s) from the bank statement.` }],
+				details: { ok: true, data: { candidates } },
+			};
 		},
 	});
 }

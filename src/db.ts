@@ -195,10 +195,37 @@ export function migrate(db: FinanceDB): void {
 	for (const stmt of ADD_COLS) {
 		try {
 			db.exec(stmt);
-		} catch {
-			// Column already exists — safe to ignore
+		} catch (e: any) {
+			const msg = (e?.message || "").toLowerCase();
+			if (!msg.includes("duplicate column")) {
+				console.warn(`[migrate] unexpected ALTER error: ${msg}`);
+			}
 		}
 	}
+
+	// CHECK constraint via trigger — sql.js ALTER TABLE doesn't support adding
+	// CHECK constraints to existing columns. Using BEFORE INSERT/UPDATE triggers
+	// that are naturally idempotent (CREATE TRIGGER IF NOT EXISTS).
+	db.exec(`
+		CREATE TRIGGER IF NOT EXISTS trg_transactions_media_source_kind_check
+		BEFORE INSERT ON transactions
+		FOR EACH ROW
+		WHEN NEW.media_source_kind IS NOT NULL
+		  AND NEW.media_source_kind NOT IN ('audio', 'image', 'pdf')
+		BEGIN
+			SELECT RAISE(ABORT, 'invalid media_source_kind: must be audio, image, pdf, or NULL');
+		END;
+	`);
+	db.exec(`
+		CREATE TRIGGER IF NOT EXISTS trg_transactions_media_source_kind_check_update
+		BEFORE UPDATE OF media_source_kind ON transactions
+		FOR EACH ROW
+		WHEN NEW.media_source_kind IS NOT NULL
+		  AND NEW.media_source_kind NOT IN ('audio', 'image', 'pdf')
+		BEGIN
+			SELECT RAISE(ABORT, 'invalid media_source_kind: must be audio, image, pdf, or NULL');
+		END;
+	`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
