@@ -18,6 +18,8 @@ const SRC = resolve(__dirname, "../src");
 
 const { FinanceDB } = await import(join(SRC, "db.ts"));
 const { startServer } = await import(join(SRC, "server.ts"));
+const { sniffMime } = await import(join(SRC, "media/mime.ts"));
+const { writeTemp, readTemp, deleteTemp } = await import(join(SRC, "media/ingest.ts"));
 
 const SCRATCH = join(tmpdir(), `pi-finance-tracker-smoke-${Date.now()}.db`);
 const PORT = 3860;
@@ -224,6 +226,118 @@ try {
 		assert(ws.find((w) => w.name === "Persistence test").opening_minor === 12345, "opening balance intact");
 		db2.close();
 	});
+// Phase 8.1 — MIME sniff + temp file lifecycle
+const TEMP_DIR = join(tmpdir(), `pi-finance-tracker-smoke-media-${Date.now()}`);
+
+await test("MIME sniff — JPEG", async () => {
+	// Minimal valid JPEG: FF D8 FF E0 ... (SOI + APP0 + ...)
+	const jpeg = Buffer.from([
+		0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46,
+		0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01,
+		0x00, 0x01, 0x00, 0x00, 0xff, 0xdb, 0x00, 0x43,
+	]);
+	const result = sniffMime(jpeg);
+	assert(result.kind === "image", `kind=${result.kind}`);
+	assert(result.mime === "image/jpeg", `mime=${result.mime}`);
+});
+
+await test("MIME sniff — PDF", async () => {
+	const pdf = Buffer.from("%PDF-1.4\n%\xc3\xa4\xc3\xbc\xc3\xb6\n");
+	const result = sniffMime(pdf);
+	assert(result.kind === "pdf", `kind=${result.kind}`);
+	assert(result.mime === "application/pdf", `mime=${result.mime}`);
+});
+
+await test("MIME sniff — unsupported", async () => {
+	const txt = Buffer.from("hello world this is not a supported format");
+	let threw = false;
+	try {
+		sniffMime(txt);
+	} catch (e) {
+		threw = true;
+		assert(e.code === "unsupported_format" || String(e).includes("unsupported_format"),
+			"expected unsupported_format, got " + e.message);
+	}
+	assert(threw, "sniffMime should have thrown");
+});
+
+await test("Temp file lifecycle", async () => {
+	const content = Buffer.alloc(1024, 0x41); // 1 KB of 'A's
+	const ttlMs = 60 * 1000; // 1 minute
+	const { mediaId, path: filePath } = writeTemp(content, "image", { tempDir: TEMP_DIR, ttlMs });
+	assert(mediaId.length >= 20, `mediaId=${mediaId}`);
+	assert(existsSync(filePath), "file exists after write");
+
+	const readBack = readTemp(mediaId, TEMP_DIR, ttlMs);
+	assert(readBack !== null, "readTemp returned non-null");
+	assert(readBack.buffer.length === 1024, `length=${readBack.buffer.length}`);
+	assert(readBack.buffer[0] === 0x41, "first byte matches");
+
+	const deleted = deleteTemp(mediaId, TEMP_DIR);
+	assert(deleted === true, "deleteTemp returned true");
+
+	const afterDelete = readTemp(mediaId, TEMP_DIR, ttlMs);
+	assert(afterDelete === null, "readTemp returns null after delete");
+});
+
+// Phase 8.1 — schema migration + new transaction fields (self-contained, fresh DB)
+await test("Schema migration — new columns exist on a fresh DB", async () => {
+	const SCRATCH_MIG = join(tmpdir(), `pi-finance-tracker-smoke-mig-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.db`);
+	const migDb = await FinanceDB.open(SCRATCH_MIG);
+	const cols = migDb.columnsOf("transactions").map((c) => c.name);
+	assert(cols.includes("media_path"), `media_path missing. cols=${cols.join(",")}`);
+	assert(cols.includes("media_source_kind"), `media_source_kind missing. cols=${cols.join(",")}`);
+	migDb.close();
+	rmSync(SCRATCH_MIG, { force: true });
+});
+
+await test("Schema migration — migrate() is idempotent on an already-migrated DB", async () => {
+	const SCRATCH_MIG = join(tmpdir(), `pi-finance-tracker-smoke-mig2-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.db`);
+	const migDb = await FinanceDB.open(SCRATCH_MIG);
+	// Run migrate() again on an already-migrated DB — must not throw, columns must remain.
+	migDb.migrate();
+	const cols = migDb.columnsOf("transactions").map((c) => c.name);
+	assert(cols.includes("media_path"), "media_path present after re-migrate");
+	assert(cols.includes("media_source_kind"), "media_source_kind present after re-migrate");
+	migDb.close();
+	rmSync(SCRATCH_MIG, { force: true });
+});
+
+await test("Transaction — new media_path / media_source_kind default null + round-trip", async () => {
+	const SCRATCH_TX = join(tmpdir(), `pi-finance-tracker-smoke-tx-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.db`);
+	const txDb = await FinanceDB.open(SCRATCH_TX);
+	const wallet = txDb.createWallet({ name: "Media-defaults-wallet", currency: "IDR", opening_minor: 0 });
+	const category = txDb.createCategory({ name: "Media-defaults-cat", kind: "expense" });
+	const tx = txDb.createTransaction({
+		wallet_id: wallet.id,
+		category_id: category.id,
+		type: "expense",
+		amount_minor: 1000,
+		currency: "IDR",
+		note: "plain transaction, no media",
+	});
+	assert(tx.media_path === null, `media_path=${tx.media_path}`);
+	assert(tx.media_source_kind === null, `media_source_kind=${tx.media_source_kind}`);
+
+	// Update with media fields
+	const updated = txDb.updateTransaction(tx.id, {
+		media_path: "/tmp/abc123",
+		media_source_kind: "image",
+	});
+	assert(updated.media_path === "/tmp/abc123", `media_path updated=${updated.media_path}`);
+	assert(updated.media_source_kind === "image", `media_source_kind updated=${updated.media_source_kind}`);
+
+	// getTransaction round-trips them
+	const fetched = txDb.getTransaction(tx.id);
+	assert(fetched.media_path === "/tmp/abc123", "media_path round-trip");
+	assert(fetched.media_source_kind === "image", "media_source_kind round-trip");
+	txDb.close();
+	rmSync(SCRATCH_TX, { force: true });
+});
+
+// Clean up temp dir
+try { rmSync(TEMP_DIR, { recursive: true, force: true }); } catch { /* */ }
+
 } finally {
 	try { await server.stop(); } catch { /* */ }
 	try { db.close(); } catch { /* */ }

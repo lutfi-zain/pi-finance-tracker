@@ -22,6 +22,9 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { FinanceDB } from "./db.js";
 import { startServer, type ServerHandle } from "./server.js";
 import { registerTools } from "./tools.js";
+import { getMediaConfig } from "./config.js";
+import { GroqClient } from "./groq.js";
+import { startSweeper } from "./media/ingest.js";
 
 interface ExtensionState {
 	db: FinanceDB;
@@ -29,6 +32,8 @@ interface ExtensionState {
 	dbPath: string;
 	port: number;
 	hostname: string;
+	groqClient: GroqClient | null;
+	sweeperStop: (() => void) | null;
 }
 
 const state: ExtensionState = {
@@ -37,6 +42,8 @@ const state: ExtensionState = {
 	dbPath: "",
 	port: 0,
 	hostname: "",
+	groqClient: null,
+	sweeperStop: null,
 };
 
 function defaultDbPath(): string {
@@ -113,13 +120,45 @@ export default function (pi: ExtensionAPI) {
 		}
 	};
 
-	// Open DB + start server on first session
+	// Open DB + start server + init media features on first session
 	pi.on("session_start", async (event, ctx) => {
 		try {
 			if (!state.db) {
 				state.db = await openDatabase(state.dbPath);
 				tryRegisterTools();
 			}
+
+			// Initialise Groq media support if enabled
+			if (!state.groqClient) {
+				const mediaCfg = getMediaConfig();
+				if (mediaCfg) {
+					if (!mediaCfg.apiKey) {
+						// Config exists but no key — tools/routes will return `not_configured` at call time.
+						ctx.ui.notify(
+							"Groq media features: not configured — set GROQ_API_KEY or PI_FINANCE_GROQ_API_KEY to enable.",
+							"warn",
+						);
+					} else {
+						state.groqClient = new GroqClient(mediaCfg);
+						// Start the TTL sweeper (every 5 minutes)
+						if (!state.sweeperStop) {
+							const intervalMs = 5 * 60 * 1000;
+							state.sweeperStop = startSweeper(
+								mediaCfg.tempDir,
+								mediaCfg.ttlMs,
+								intervalMs,
+							).stop;
+						}
+						ctx.ui.notify("Groq media client ready.", "info");
+					}
+				} else {
+					ctx.ui.notify(
+						"Groq media features: disabled by PI_FINANCE_MEDIA_ENABLED=0.",
+						"info",
+					);
+				}
+			}
+
 			if (autostart && !state.server) {
 				await ensureServer(ctx);
 				ctx.ui.notify(
@@ -254,6 +293,12 @@ export default function (pi: ExtensionAPI) {
 
 	// Clean shutdown
 	pi.on("session_shutdown", async () => {
+		try {
+			if (state.sweeperStop) {
+				state.sweeperStop();
+				state.sweeperStop = null;
+			}
+		} catch { /* ignore */ }
 		try {
 			if (state.server) {
 				await state.server.stop();

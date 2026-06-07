@@ -96,6 +96,10 @@ export interface Transaction {
 	/** Populated by list/get queries. */
 	tag_ids?: number[];
 	tag_names?: string[];
+	/** Optional path to the source media file on disk. */
+	media_path: string | null;
+	/** Kind of media that created this transaction (audio/image/pdf). */
+	media_source_kind: "audio" | "image" | "pdf" | null;
 }
 
 export interface Summary {
@@ -156,7 +160,9 @@ CREATE TABLE IF NOT EXISTS transactions (
 	currency        TEXT NOT NULL,
 	note            TEXT NOT NULL DEFAULT '',
 	occurred_at     TEXT NOT NULL DEFAULT (datetime('now')),
-	created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+	created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+	media_path      TEXT,
+	media_source_kind TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tx_wallet ON transactions(wallet_id);
 CREATE INDEX IF NOT EXISTS idx_tx_category ON transactions(category_id);
@@ -169,6 +175,31 @@ CREATE TABLE IF NOT EXISTS transaction_tags (
 );
 CREATE INDEX IF NOT EXISTS tx_tags_tag ON transaction_tags(tag_id);
 `;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Schema migration (additive only)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Run additive migrations. Idempotent — safe on fresh DB and on v0.1.0 DB.
+ * Currently adds `media_path` and `media_source_kind` to transactions.
+ *
+ * Uses try/ALTER to detect existing columns (sql.js exec doesn't return
+ * result sets, so we can't query pragma_table_info directly).
+ */
+export function migrate(db: FinanceDB): void {
+	const ADD_COLS = [
+		"ALTER TABLE transactions ADD COLUMN media_path TEXT",
+		"ALTER TABLE transactions ADD COLUMN media_source_kind TEXT",
+	];
+	for (const stmt of ADD_COLS) {
+		try {
+			db.exec(stmt);
+		} catch {
+			// Column already exists — safe to ignore
+		}
+	}
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Database class
@@ -195,8 +226,34 @@ export class FinanceDB {
 		const db = new SQL.Database(initialised);
 		const inst = new FinanceDB(db, path);
 		db.exec(SCHEMA);
+		migrate(inst);
 		inst.flush();
 		return inst;
+	}
+
+	// ── raw SQL (public for migrations) ──────────────────────────────────
+
+	/** Execute a raw SQL statement. Used by migrate(). */
+	exec(sql: string): void {
+		this.db.exec(sql);
+	}
+
+	/** Return column info for a table via `PRAGMA table_info`. */
+	columnsOf(table: string): Array<{ name: string; type: string; notnull: number; pk: number }> {
+		// sql.js exec returns result sets, even from PRAGMA
+		const result = this.db.exec(`PRAGMA table_info(${table})`);
+		if (!result || result.length === 0) return [];
+		return result[0].values.map((row) => ({
+			name: row[1] as string,
+			type: row[2] as string,
+			notnull: row[3] as number,
+			pk: row[5] as number,
+		}));
+	}
+
+	/** Run pending schema migrations (idempotent). Exposed for tests. */
+	migrate(): void {
+		migrate(this);
 	}
 
 	// ── persistence ───────────────────────────────────────────────────────
@@ -497,6 +554,8 @@ export class FinanceDB {
 		note?: string;
 		occurred_at?: string;
 		tag_ids?: number[];
+		media_path?: string | null;
+		media_source_kind?: "audio" | "image" | "pdf" | null;
 	}): Transaction {
 		if (input.amount_minor < 0) throw new Error("amount_negative");
 		if (!Number.isInteger(input.amount_minor)) throw new Error("amount_not_integer_minor_units");
@@ -510,8 +569,8 @@ export class FinanceDB {
 			if (!cat) throw new Error(`category_not_found: ${input.category_id}`);
 		}
 		const r = this.run(
-			`INSERT INTO transactions (wallet_id, category_id, type, amount_minor, currency, note, occurred_at)
-			 VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))`,
+			`INSERT INTO transactions (wallet_id, category_id, type, amount_minor, currency, note, occurred_at, media_path, media_source_kind)
+			 VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), ?, ?)`,
 			[
 				input.wallet_id,
 				input.category_id,
@@ -520,6 +579,8 @@ export class FinanceDB {
 				input.currency,
 				input.note ?? "",
 				input.occurred_at ?? null,
+				input.media_path ?? null,
+				input.media_source_kind ?? null,
 			],
 		);
 		const txId = r.lastInsertRowid;
@@ -543,6 +604,8 @@ export class FinanceDB {
 			note: string;
 			occurred_at: string;
 			tag_ids: number[];
+			media_path: string | null;
+			media_source_kind: "audio" | "image" | "pdf" | null;
 		}>,
 	): Transaction | undefined {
 		const existing = this.getTransaction(id);
@@ -554,7 +617,8 @@ export class FinanceDB {
 		this.run(
 			`UPDATE transactions
 			 SET wallet_id = ?, category_id = ?, type = ?, amount_minor = ?,
-			     currency = ?, note = ?, occurred_at = ?
+			     currency = ?, note = ?, occurred_at = ?,
+			     media_path = ?, media_source_kind = ?
 			 WHERE id = ?`,
 			[
 				merged.wallet_id,
@@ -564,6 +628,8 @@ export class FinanceDB {
 				merged.currency,
 				merged.note ?? "",
 				merged.occurred_at,
+				merged.media_path ?? null,
+				merged.media_source_kind ?? null,
 				id,
 			],
 		);
