@@ -97,8 +97,9 @@ export class GroqClient {
 		const encoder = new TextEncoder();
 		const parts: Uint8Array[] = [];
 
-		function addPart(name: string, value: string | Uint8Array, contentType?: string) {
+		function addPart(name: string, value: string | Uint8Array, contentType?: string, filename?: string) {
 			let header = `--${boundary}\r\nContent-Disposition: form-data; name="${name}"`;
+			if (filename) header += `; filename="${filename}"`;
 			if (contentType) header += `\r\nContent-Type: ${contentType}`;
 			header += "\r\n\r\n";
 			parts.push(encoder.encode(header));
@@ -106,7 +107,7 @@ export class GroqClient {
 			parts.push(encoder.encode("\r\n"));
 		}
 
-		addPart("file", buf, mime);
+		addPart("file", buf, mime, ext ? `audio.${ext}` : "audio.bin");
 		addPart("model", this.config.modelAudio);
 		addPart("response_format", "verbose_json");
 		if (language) addPart("language", language);

@@ -27,11 +27,16 @@ for; just a local SQLite file and a few lines of config.
 | | |
 |---|---|
 | 🗄️  **Local SQLite** | Your data lives in `~/.pi/agent/finance-tracker/finance.db`. No cloud, no telemetry. |
-| 🔌 **17 LLM tools** | `finance_*` tools with TypeBox schemas, ready for the agent to call. |
-| 🌐 **Web CRUD UI** | A clean dark-themed single-page app for humans. Full create / read / update / delete. |
+| 🔌 **21 LLM tools** | `finance_*` core tools + `media_*` Groq-powered tools (audio transcription, image extraction, PDF extraction, bank-statement import). |
+| 🌐 **Web CRUD UI** | A clean dark-themed single-page app for humans. Full create / read / update / delete + **Capture view** for drag-and-drop file upload (audio/image/PDF). |
 | 📊 **Live dashboard** | Income, expense, net, per-wallet balances, per-category totals, recent activity. |
 | 🏷️  **Tags (n:m)** | Apply any number of tags to a transaction. Search, filter, group. |
-| 💱 **Multi-currency** | Every transaction carries its own currency; minor units everywhere — no float drift. |
+| 💱 **Multi-currency** | Every transaction carries its own currency; minor units everywhere — no float drift.
+| 🎤 **Groq audio transcription** | Upload voice memos, meeting recordings, or expense notes — `whisper-large-v3` transcribes them into structured transactions.
+| 🖼️  **Groq image reading** | Snap a receipt or invoice photo — `meta-llama/llama-4-scout-17b-16e-instruct` extracts text and amount.
+| 📄 **Groq PDF extraction** | Drag a bank statement (rekening koran) PDF — `llama-3.3-70b-versatile` + `pdf-parse` extracts transactional data in JSON mode.
+| 🏦 **Bank-statement import** | Self-service bulk-import flow in the UI: upload a PDF, review candidate transactions, accept what looks right, and post them with provenance tracking.
+| 🛡️  **Provenance** | Every imported transaction records `media_path` + `media_source_kind` (`audio`/`image`/`pdf`) + SHA-256 of the source file. |
 | 🧠 **First-run seed** | 5 categories, 2 tags, a Cash wallet so the UI is never empty. |
 | 🛡️  **Referential integrity** | Foreign keys + `ON DELETE` rules; can't accidentally orphan transactions. |
 | ⚡ **Zero build** | Pi's jiti loads TypeScript directly. No transpiler, no bundler, no step between you and shipping. |
@@ -140,6 +145,7 @@ system prompt. The agent picks the right one based on what you ask.
 | Tags         | `finance_list_tags` · `finance_create_tag` · `finance_update_tag` · `finance_delete_tag` |
 | Transactions | `finance_list_transactions` · `finance_get_transaction` · `finance_create_transaction` · `finance_update_transaction` · `finance_delete_transaction` |
 | Aggregate    | `finance_summary` — totals + per-wallet balances + per-category totals          |
+| Media        | `media_transcribe_audio` · `media_extract_image` · `media_extract_pdf` · `media_import_bank_statement` |
 
 > 💡 All amounts are **integer minor units** (cents for USD, raw rupiah for
 > IDR, etc.). The transaction form and tool descriptions document the
@@ -200,6 +206,16 @@ All configuration is via environment variables. None are required.
 | `PI_FINANCE_HOST`       | `127.0.0.1`                                        | Bind address                                     |
 | `PI_FINANCE_AUTOSTART`  | `1` (set to `0` to skip)                           | Auto-start the web server on first `session_start` |
 | `PI_FINANCE_BROWSER`    | `xdg-open` / `open` / `start` (per platform)       | Override the browser opener used by `/finance open` |
+| `PI_FINANCE_MEDIA_ENABLED` | `1` (set `0` to disable)                      | Master switch for all Groq media features          |
+| `GROQ_API_KEY` / `PI_FINANCE_GROQ_API_KEY` | —                        | Required for media features                         |
+| `PI_FINANCE_GROQ_BASE_URL` | `https://api.groq.com/openai/v1`                | Override the Groq API base URL                      |
+| `PI_FINANCE_GROQ_MODEL_AUDIO` | `whisper-large-v3`                          | Override the audio transcription model               |
+| `PI_FINANCE_GROQ_MODEL_IMAGE` | `meta-llama/llama-4-scout-17b-16e-instruct` | Override the vision model                           |
+| `PI_FINANCE_GROQ_MODEL_PDF_STRUCTURE` | `llama-3.3-70b-versatile`           | Override the PDF structure extraction model          |
+| `PI_FINANCE_MEDIA_MAX_BYTES` | `26214400` (25 MB)                          | Max uploaded file size in bytes                      |
+| `PI_FINANCE_MEDIA_TEMP_DIR` | (see `PI_FINANCE_DB` dir + `/media`)         | Directory for temporary uploaded files               |
+| `PI_FINANCE_MEDIA_TTL_MINUTES` | `30`                                      | Minutes before a temp file is auto-deleted           |
+| `PI_FINANCE_MEDIA_MAX_PDF_PAGES` | `50`                                     | Max PDF pages to send to Groq for extraction         |
 
 ### Security
 
@@ -209,6 +225,10 @@ There is no authentication.
 > ⚠️ **Don't expose this to the internet.** If you set
 > `PI_FINANCE_HOST=0.0.0.0`, anyone on the network can read and edit your
 > books.
+>
+> Media files uploaded via the Capture UI are sent to Groq for processing.
+> Consider the privacy implications and set `PI_FINANCE_MEDIA_ENABLED=0`
+> if you want to disable all media features entirely.
 
 ## 🗃️ Schema
 
@@ -218,7 +238,8 @@ categories       (id, name, kind IN ('income','expense'), icon, color, created_a
 tags             (id, name, color, created_at)
 transactions     (id, wallet_id → wallets, category_id → categories NULL,
                   type IN ('income','expense','transfer'),
-                  amount_minor ≥ 0, currency, note, occurred_at, created_at)
+                  amount_minor ≥ 0, currency, note, occurred_at, created_at,
+                  media_path TEXT, media_source_kind TEXT)
 transaction_tags (transaction_id → transactions, tag_id → tags,
                   PRIMARY KEY (transaction_id, tag_id))
 ```
@@ -230,6 +251,10 @@ transaction_tags (transaction_id → transactions, tag_id → tags,
   the tool descriptions show the major-unit equivalent.
 - **Transfers** have `category_id = NULL`. The UI hides the category picker
   when you pick "Transfer".
+- **Media features** add two nullable columns to `transactions`:
+  `media_path` (path to the uploaded file) and `media_source_kind`
+  (`'audio'`, `'image'`, or `'pdf'`). A CHECK trigger ensures the value
+  is one of the three allowed kinds.
 
 ## 🧑‍💻 Development
 
@@ -258,14 +283,23 @@ The extension is loaded by jiti directly from TypeScript — no `tsc`, no
 pi-finance-tracker/
 ├── package.json          # deps + pi.extensions manifest
 ├── README.md             # you are here
-├── node_modules/         # sql.js (WASM SQLite)
+├── CHANGELOG.md          # release notes
+├── test/
+│   ├── smoke.mjs         # 40 offline smoke tests (no API key needed)
+│   └── smoke-groq.mjs    # 4 live Groq integration tests (needs GROQ_API_KEY)
+├── node_modules/         # sql.js + pdf-parse (~20 MB)
 └── src/
     ├── index.ts          # main extension entry, hooks, /finance command
+    ├── config.ts         # media env var parsing
     ├── db.ts             # SQLite schema, migrations, typed CRUD helpers
+    ├── groq.ts           # GroqClient: thin fetch wrapper (no SDK dep)
     ├── server.ts         # tiny http server (REST + static UI)
-    ├── tools.ts          # TypeBox-typed LLM-callable tools
+    ├── tools.ts          # TypeBox-typed LLM-callable tools (finance_* + media_*)
+    ├── media/
+    │   ├── mime.ts       # MIME type sniffer (JPEG/PNG/WebP/PDF/MP3/WAV/OGG/FLAC/M4A/WebM)
+    │   └── ingest.ts     # temp file write/read/delete + TTL sweeper
     └── ui/
-        └── index.html    # single-page CRUD app
+        └── index.html    # single-page CRUD app (Dashboard + Capture view)
 ```
 
 ## 🤝 Contributing
