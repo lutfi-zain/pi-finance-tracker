@@ -641,6 +641,12 @@ export function registerTools(
 			}
 
 			// parse_as === "transactions" — use Groq for structure
+			if (!text.trim()) {
+				return {
+					content: [{ type: "text", text: "PDF appears scanned (no extractable text). OCR not available for scanned PDFs." }],
+					details: { ok: false, error: { code: "ocr_unavailable_for_scanned_pdf", message: "PDF appears scanned (no extractable text). OCR not available for scanned PDFs." } },
+				};
+			}
 			const result = await groqClient!.extractPdfStructure({ text, schema: {} });
 			if (!result.ok) {
 				return { content: [{ type: "text", text: `PDF extraction failed: ${result.error.code} — ${result.error.message}` }], details: result };
@@ -675,6 +681,13 @@ export function registerTools(
 			const pdfParse = (await import("pdf-parse")).default;
 			const pdfData = await pdfParse(buf);
 			const text = pdfData.text || "";
+
+			if (!text.trim()) {
+				return {
+					content: [{ type: "text", text: "PDF appears scanned (no extractable text). OCR not available for scanned PDFs." }],
+					details: { ok: false, error: { code: "ocr_unavailable_for_scanned_pdf", message: "PDF appears scanned (no extractable text). OCR not available for scanned PDFs." } },
+				};
+			}
 
 			const result = await groqClient!.extractPdfStructure({ text, schema: {} });
 			if (!result.ok) {

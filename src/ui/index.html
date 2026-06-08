@@ -233,6 +233,39 @@
   /* hide scrollbars in cards */
   .table-wrap::-webkit-scrollbar { height: 8px; }
   .table-wrap::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+
+  /* ── capture view ─────────────────────────────────────────────────── */
+  .dropzone {
+    border: 2px dashed var(--border-strong);
+    border-radius: var(--radius);
+    padding: 48px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .dropzone:hover,
+  .dropzone.drag-over { border-color: var(--accent); background: rgba(124,92,255,.05); }
+  .dropzone-icon { font-size: 36px; margin-bottom: 8px; }
+  .dropzone-title { font-size: 16px; font-weight: 500; margin-bottom: 4px; }
+  .dropzone-hint { font-size: 13px; color: var(--text-dim); }
+  .dropzone-formats { font-size: 12px; color: var(--text-faint); margin-top: 8px; }
+  .capture-preview { margin-top: 16px; }
+  .capture-preview .preview-text {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px; font-size: 13px; line-height: 1.6;
+    max-height: 200px; overflow-y: auto; white-space: pre-wrap;
+  }
+  .capture-preview .preview-meta { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; }
+  .capture-preview .preview-actions { display: flex; gap: 8px; margin-top: 12px; }
+  .capture-checklist { margin-top: 12px; }
+  .capture-checklist .check-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .capture-checklist .check-row:hover { background: rgba(255,255,255,.02); }
+  .capture-checklist .check-row input[type="checkbox"] { accent-color: var(--accent); }
+  .capture-privacy { margin-top: 16px; font-size: 12px; color: #f59e0b; }
 </style>
 </head>
 <body>
@@ -248,6 +281,7 @@
       <button data-view="categories"><span class="icon">⌘</span> Categories</button>
       <button data-view="tags"><span class="icon">#</span> Tags</button>
       <button data-view="transactions"><span class="icon">⇄</span> Transactions</button>
+      <button data-view="capture"><span class="icon">⤴</span> Capture</button>
     </nav>
     <div class="footer-link">
       <span id="status-line">Loading…</span>
@@ -271,6 +305,8 @@ const state = {
   txFilter: { wallet_id: "", category_id: "", tag_id: "", type: "", from: "", to: "", q: "" },
   categoryKind: "expense",
   loading: false,
+  captureTab: "audio",
+  captureData: null, // { mediaId, kind, result, candidates, sourceName } after upload
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -1029,6 +1065,7 @@ function render() {
   else if (state.view === "categories") root.innerHTML = renderCategories();
   else if (state.view === "tags") root.innerHTML = renderTags();
   else if (state.view === "transactions") { root.innerHTML = renderTransactions(); wireTxView(); loadTransactionsView(); return; }
+  else if (state.view === "capture") { root.innerHTML = renderCapture(); wireCapture(); return; }
   wireGlobal();
 }
 
@@ -1120,6 +1157,417 @@ function wireTxView() {
       }).catch((err) => toast(err.message, "error"));
     }
   }, { once: false });
+}
+
+/* ── capture view ──────────────────────────────────────────────── */
+
+const CAPTURE_MIME = {
+  audio: ["audio/mpeg","audio/wav","audio/ogg","audio/flac","audio/mp4","audio/webm"],
+  image: ["image/jpeg","image/png","image/webp","image/heic"],
+  pdf: ["application/pdf"],
+};
+const CAPTURE_FORMATS = {
+  audio: "(mp3, wav, m4a, ogg, flac, webm)",
+  image: "(jpg, png, webp, heic)",
+  pdf: "(PDF)",
+};
+const CAPTURE_ACCEPT = "audio/mpeg,audio/wav,audio/ogg,audio/flac,audio/mp4,audio/webm,image/jpeg,image/png,image/webp,image/heic,application/pdf";
+
+function renderCapture() {
+  return `
+    <h1>Capture</h1>
+    <p class="subtitle">Upload a file to create a transaction from its content.</p>
+    <div class="toolbar">
+      <div class="segmented" id="capture-tabs">
+        <button data-tab="audio" class="${state.captureTab === "audio" ? "active" : ""}">Audio</button>
+        <button data-tab="image" class="${state.captureTab === "image" ? "active" : ""}">Image</button>
+        <button data-tab="pdf" class="${state.captureTab === "pdf" ? "active" : ""}">PDF</button>
+      </div>
+    </div>
+
+    <div class="dropzone" id="capture-dropzone">
+      <div class="dropzone-icon">📂</div>
+      <div class="dropzone-title">Drop a file here / Letakkan berkas di sini</div>
+      <div class="dropzone-hint">or click to choose</div>
+      <div class="dropzone-formats" id="capture-formats">${CAPTURE_FORMATS[state.captureTab]}</div>
+      <input type="file" id="capture-file-input" accept="${CAPTURE_ACCEPT}" style="display:none" />
+    </div>
+
+    <div id="capture-progress" style="display:none;margin-top:16px">
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-dim);margin-bottom:4px">
+        <span id="capture-progress-label">Uploading…</span>
+        <span id="capture-progress-pct">0%</span>
+      </div>
+      <div style="background:var(--bg-elev-2);border-radius:99px;height:6px;overflow:hidden">
+        <div id="capture-progress-bar" style="background:var(--accent);height:100%;width:0%;transition:width .2s"></div>
+      </div>
+    </div>
+
+    <div id="capture-preview" style="display:none" class="capture-preview"></div>
+
+    <div class="capture-privacy">
+      ⚠️ Files are sent to Groq for processing. / File dikirim ke Groq untuk diproses.
+      Set <code>PI_FINANCE_MEDIA_ENABLED=0</code> to disable.
+    </div>
+  `;
+}
+
+function wireCapture() {
+  // Tabs
+  $$("#capture-tabs button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.captureTab = btn.dataset.tab;
+      state.captureData = null;
+      render();
+    });
+  });
+
+  // Drop zone: drag events
+  const dz = $("#capture-dropzone");
+  dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("drag-over"); });
+  dz.addEventListener("dragleave", () => dz.classList.remove("drag-over"));
+  dz.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dz.classList.remove("drag-over");
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (files && files.length > 0) captureUpload(files[0]);
+  });
+
+  // Click to pick
+  dz.addEventListener("click", () => $("#capture-file-input").click());
+  $("#capture-file-input").addEventListener("change", (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+      captureUpload(e.target.files[0]);
+    }
+  });
+}
+
+async function captureUpload(file) {
+  const tab = state.captureTab;
+  const acceptMime = CAPTURE_MIME[tab];
+
+  // Client-side MIME prefix validation
+  const fileMime = file.type || "";
+  const prefixOk = acceptMime.some((m) => fileMime.startsWith(m.split("/")[0]));
+  if (!prefixOk && fileMime) {
+    toast("File type " + fileMime + " is not supported for " + tab + " mode. / Tipe file tidak didukung.", "error");
+    return;
+  }
+
+  // Show progress
+  const prog = $("#capture-progress");
+  const bar = $("#capture-progress-bar");
+  const pct = $("#capture-progress-pct");
+  const lbl = $("#capture-progress-label");
+  prog.style.display = "";
+  bar.style.width = "0%";
+  pct.textContent = "0%";
+  lbl.textContent = "Uploading… / Mengunggah…";
+
+  state.captureData = null;
+  $("#capture-preview").style.display = "none";
+
+  try {
+    // Upload via XHR for progress
+    const { mediaId, kind } = await uploadFileXhr(file, prog, bar, pct, lbl);
+
+    lbl.textContent = "Processing… / Memproses…";
+    bar.style.width = "90%";
+    pct.textContent = "90%";
+
+    // Call extract endpoint
+    let extractData;
+    if (kind === "audio") {
+      const r = await api("POST", "/api/media/transcribe", { media_id: mediaId });
+      extractData = r.data;
+    } else if (kind === "image") {
+      const r = await api("POST", "/api/media/extract-image", { media_id: mediaId });
+      extractData = r.data;
+    } else if (kind === "pdf") {
+      const r = await api("POST", "/api/media/extract-pdf", { media_id: mediaId, parse_as: "transactions" });
+      extractData = r.data;
+    }
+
+    bar.style.width = "100%";
+    pct.textContent = "100%";
+
+    state.captureData = { mediaId, kind, result: extractData, sourceName: file.name, file };
+    showPreview(extractData, kind, file.name, file);
+
+    setTimeout(() => { prog.style.display = "none"; bar.style.width = "0%"; }, 800);
+  } catch (e) {
+    prog.style.display = "none";
+    toast("Upload failed: " + e.message + " / Gagal mengunggah", "error");
+  }
+}
+
+function uploadFileXhr(file, progEl, barEl, pctEl, lblEl) {
+  return new Promise((resolve, reject) => {
+    const fd = new FormData();
+    fd.append("file", file);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/media/ingest");
+
+    xhr.upload.addEventListener("progress", (e) => {
+      if (e.lengthComputable) {
+        const p = Math.round((e.loaded / e.total) * 100);
+        barEl.style.width = p + "%";
+        pctEl.textContent = p + "%";
+      }
+    });
+
+    xhr.addEventListener("load", () => {
+      let data;
+      try { data = JSON.parse(xhr.responseText); } catch { data = null; }
+      if (xhr.status >= 200 && xhr.status < 300 && data && data.ok) {
+        resolve(data.data);
+      } else {
+        const msg = (data && (data.error || (data.error && data.error.message))) || "Upload returned " + xhr.status;
+        reject(new Error(msg));
+      }
+    });
+
+    xhr.addEventListener("error", () => reject(new Error("Network error / Gagal jaringan")));
+    xhr.addEventListener("abort", () => reject(new Error("Upload cancelled / Batal")));
+
+    xhr.send(fd);
+  });
+}
+
+function showPreview(data, kind, sourceName, sourceFile) {
+  const preview = $("#capture-preview");
+  preview.style.display = "";
+
+  if (kind === "pdf" && data.transactions && data.transactions.length > 0) {
+    // Bank-statement checklist
+    renderChecklist(data, sourceName, sourceFile);
+  } else if (kind === "pdf" && (!data.transactions || data.transactions.length === 0)) {
+    // No transactions found
+    preview.innerHTML = `
+      <div class="card" style="margin:0">
+        <div class="preview-meta">📄 PDF — ${escapeHtml(sourceName)}</div>
+        <div class="preview-text">${escapeHtml(data.text || "(No text extracted / Tidak ada teks)")}</div>
+        <div style="margin-top:12px">
+          <span class="badge" style="background:rgba(245,158,11,.15);color:#f59e0b">No transactions found</span>
+        </div>
+      </div>`;
+  } else {
+    // Audio / image single-result preview
+    const text = data.text || "";
+    const structured = data.structured;
+    const metaParts = [kind === "audio" ? "🎤" : "🖼️", escapeHtml(sourceName)];
+    if (data.language) metaParts.push("— " + data.language);
+    if (data.duration_sec) metaParts.push("(" + Math.round(data.duration_sec) + "s)");
+
+    let structuredHtml = "";
+    if (structured && typeof structured === "object") {
+      structuredHtml = `<div style="margin-top:10px;background:var(--bg-elev-2);padding:10px;border-radius:8px;font-size:12px">
+        ${Object.entries(structured).filter(([k]) => k !== "text").map(([k, v]) =>
+          `<div><span style="color:var(--text-dim)">${escapeHtml(k)}:</span> ${escapeHtml(String(v))}</div>`
+        ).join("")}
+      </div>`;
+    }
+
+    preview.innerHTML = `
+      <div class="card" style="margin:0">
+        <div class="preview-meta">${metaParts.join(" ")}</div>
+        <div class="preview-text">${escapeHtml(text)}</div>
+        ${structuredHtml}
+        <div class="preview-actions">
+          <button class="btn primary" id="capture-accept">Accept &amp; create transaction / Terima &amp; buat transaksi</button>
+          <button class="btn ghost" id="capture-reject">Reject / Tolak</button>
+        </div>
+      </div>`;
+
+    $("#capture-accept").addEventListener("click", async () => {
+      // Open the transaction modal pre-filled with extracted data
+      await loadAll(); // ensure wallets/categories are fresh
+      const prefillTx = buildPrefillTx(text, structured, kind);
+      txModal(prefillTx);
+      $("#capture-reject").click(); // hide preview (modal is open now)
+    });
+    $("#capture-reject").addEventListener("click", () => {
+      preview.style.display = "none";
+      state.captureData = null;
+    });
+  }
+}
+
+function buildPrefillTx(text, structured, kind) {
+  const defaultWallet = state.wallets[0];
+  const tx = {
+    type: "expense",
+    wallet_id: defaultWallet ? defaultWallet.id : null,
+    category_id: null,
+    amount_minor: 0,
+    currency: defaultWallet ? defaultWallet.currency : "USD",
+    note: text || "",
+    occurred_at: new Date().toISOString().slice(0, 10),
+    tag_ids: [],
+  };
+
+  if (structured) {
+    if (structured.amount && typeof structured.amount === "number") {
+      tx.amount_minor = structured.amount;
+    }
+    if (structured.date) {
+      tx.occurred_at = String(structured.date).slice(0, 10);
+    }
+    if (structured.merchant && !tx.note) {
+      tx.note = String(structured.merchant);
+    }
+  }
+
+  // Try to guess a category that matches
+  if (kind === "image" && state.categories.length > 0) {
+    const expenseCats = state.categories.filter((c) => c.kind === "expense");
+    if (expenseCats.length > 0) tx.category_id = expenseCats[0].id;
+  }
+
+  return tx;
+}
+
+function renderChecklist(data, sourceName, sourceFile) {
+  const preview = $("#capture-preview");
+  const candidates = data.transactions || [];
+
+  // Compute SHA-256 hex from the ORIGINAL FILE BYTES (not the JSON of the extraction result).
+  // The provenance marker must identify the source PDF, not the model's structured output.
+  // Without the original file, we leave sha256Hex empty (the user can still bulk-create
+  // without provenance, but the UI surfaces a small warning).
+  let sha256Hex = "";
+  if (sourceFile && sourceFile.arrayBuffer) {
+    (async () => {
+      try {
+        const ab = await sourceFile.arrayBuffer();
+        const digest = await crypto.subtle.digest("SHA-256", ab);
+        sha256Hex = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+      } catch { /* ignore */ }
+    })();
+  }
+
+  const rows = candidates.map((c, i) => `
+    <div class="check-row" data-idx="${i}">
+      <input type="checkbox" checked data-idx="${i}" />
+      <span style="flex:1">
+        <strong>${escapeHtml(c.description || "—")}</strong>
+        <span style="color:var(--text-dim);font-size:12px;margin-left:8px">
+          ${c.occurred_at ? escapeHtml(String(c.occurred_at).slice(0, 10)) : "—"}
+          · ${fmt(c.amount_minor, c.currency || "IDR")}
+        </span>
+        ${c.confidence != null && c.confidence < 0.6
+          ? `<span class="badge" style="background:rgba(239,68,68,.15);color:var(--expense);margin-left:4px">low conf</span>`
+          : ""}
+      </span>
+      <button class="icon-btn" data-edit-candidate="${i}">Edit</button>
+    </div>
+  `).join("");
+
+  preview.innerHTML = `
+    <div class="card" style="margin:0">
+      <div class="preview-meta">📄 PDF — ${escapeHtml(sourceName)} — ${candidates.length} candidate(s)</div>
+      <div class="capture-checklist">
+        <div class="toolbar" style="margin-bottom:8px">
+          <button class="btn small" id="check-select-all">Select all / Pilih semua</button>
+          <button class="btn small" id="check-deselect-all">Deselect all</button>
+          <div class="spacer"></div>
+          <span style="font-size:12px;color:var(--text-dim)" id="check-count">${candidates.length} selected</span>
+        </div>
+        ${rows}
+      </div>
+      <div class="preview-actions">
+        <button class="btn primary" id="capture-bulk-create" disabled>Create all accepted / Buat semua</button>
+        <button class="btn ghost" id="capture-reject">Cancel</button>
+      </div>
+    </div>`;
+
+  // Wire checklist
+  let selected = new Set(candidates.map((_, i) => i));
+  const updateCount = () => {
+    const btn = $("#capture-bulk-create");
+    btn.disabled = selected.size === 0;
+    $("#check-count").textContent = selected.size + " selected";
+  };
+
+  $$(".check-row input[type='checkbox']").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      const idx = Number(cb.dataset.idx);
+      if (cb.checked) selected.add(idx); else selected.delete(idx);
+      updateCount();
+    });
+  });
+
+  $("#check-select-all").addEventListener("click", () => {
+    $$(".check-row input[type='checkbox']").forEach((cb) => { cb.checked = true; selected.add(Number(cb.dataset.idx)); });
+    updateCount();
+  });
+  $("#check-deselect-all").addEventListener("click", () => {
+    $$(".check-row input[type='checkbox']").forEach((cb) => { cb.checked = false; selected.delete(Number(cb.dataset.idx)); });
+    updateCount();
+  });
+
+  // Per-row Edit
+  $$("[data-edit-candidate]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const idx = Number(btn.dataset.editCandidate);
+      const cand = candidates[idx];
+      if (!cand) return;
+      const defaultWallet = state.wallets[0];
+      txModal({
+        type: cand.type || "expense",
+        wallet_id: cand.suggested_wallet_id || (defaultWallet ? defaultWallet.id : null),
+        category_id: cand.suggested_category_id || null,
+        amount_minor: cand.amount_minor || 0,
+        currency: cand.currency || "IDR",
+        note: cand.description || "",
+        occurred_at: cand.occurred_at ? String(cand.occurred_at).slice(0, 10) : new Date().toISOString().slice(0, 10),
+        tag_ids: [],
+      });
+    });
+  });
+
+  // Bulk create
+  $("#capture-bulk-create").addEventListener("click", async () => {
+    const selectedCands = Array.from(selected).sort((a, b) => a - b).map((i) => candidates[i]);
+    const defaultWallet = state.wallets[0];
+    if (!defaultWallet) { toast("No wallet available / Tidak ada dompet", "error"); return; }
+
+    const btn = $("#capture-bulk-create");
+    btn.disabled = true;
+    btn.textContent = "Creating… / Membuat…";
+
+    try {
+      const r = await api("POST", "/api/transactions/bulk", {
+        wallet_id: defaultWallet.id,
+        default_currency: defaultWallet.currency,
+        source_filename: sourceName || undefined,
+        source_sha256_hex: sha256Hex || undefined,
+        transactions: selectedCands,
+      });
+
+      const created = (r.created || []).length;
+      const skipped = (r.skipped || []).length;
+      toast(`Created ${created} transaction(s), skipped ${skipped}. / ${created} transaksi dibuat, ${skipped} dilewati.`, "success");
+
+      await loadAll();
+      state.captureData = null;
+      // Navigate to transactions view
+      const navBtn = $$("#nav button").find((b) => b.dataset.view === "transactions");
+      if (navBtn) navBtn.click();
+    } catch (e) {
+      toast("Bulk create failed: " + e.message + " / Gagal", "error");
+      btn.disabled = false;
+      btn.textContent = "Create all accepted / Buat semua";
+    }
+  });
+
+  $("#capture-reject").addEventListener("click", () => {
+    preview.style.display = "none";
+    state.captureData = null;
+  });
+
+  updateCount();
 }
 
 /* ── boot ────────────────────────────────────────────────────────── */

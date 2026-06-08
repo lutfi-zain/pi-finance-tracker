@@ -136,7 +136,8 @@ export class GroqClient {
 			}
 			if (!res.ok) {
 				const bodyText = await res.text().catch(() => "");
-				return unavailable(`Groq API returned ${res.status}: ${bodyText.slice(0, 200)}`);
+				if (res.status >= 500) return unavailable(`Groq API returned ${res.status}: ${bodyText.slice(0, 200)}`);
+				return invalidResponse(`Groq API returned ${res.status}: ${bodyText.slice(0, 200)}`);
 			}
 
 			const json: any = await res.json();
@@ -203,7 +204,8 @@ export class GroqClient {
 			}
 			if (!res.ok) {
 				const bodyText = await res.text().catch(() => "");
-				return unavailable(`Groq API returned ${res.status}: ${bodyText.slice(0, 200)}`);
+				if (res.status >= 500) return unavailable(`Groq API returned ${res.status}: ${bodyText.slice(0, 200)}`);
+				return invalidResponse(`Groq API returned ${res.status}: ${bodyText.slice(0, 200)}`);
 			}
 
 			const json: any = await res.json();
@@ -276,7 +278,8 @@ export class GroqClient {
 			}
 			if (!res.ok) {
 				const bodyText = await res.text().catch(() => "");
-				return unavailable(`Groq API returned ${res.status}: ${bodyText.slice(0, 200)}`);
+				if (res.status >= 500) return unavailable(`Groq API returned ${res.status}: ${bodyText.slice(0, 200)}`);
+				return invalidResponse(`Groq API returned ${res.status}: ${bodyText.slice(0, 200)}`);
 			}
 
 			const json: any = await res.json();
