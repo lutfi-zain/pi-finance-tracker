@@ -1,7 +1,7 @@
 {
   "name": "pi-finance-tracker",
-  "version": "0.2.0",
-  "description": "Pi extension: SQLite-backed personal finance tracker with a web CRUD UI and 17 LLM-callable tools",
+  "version": "0.2.1",
+  "description": "Pi extension: SQLite-backed personal finance tracker with 21 LLM tools, web CRUD UI, and Groq media features (audio/image/PDF)",
   "type": "module",
   "license": "MIT",
   "author": {

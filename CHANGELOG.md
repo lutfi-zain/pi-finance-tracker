@@ -5,7 +5,17 @@ All notable changes to **pi-finance-tracker** are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
-## [0.2.0] — 2026-06-07
+## [0.2.1] — 2026-06-12
+
+### Fixed
+- `startServer` with port `0` (OS auto-assign) now correctly resolves
+  the actual port via `server.address().port` instead of returning
+  `http://127.0.0.1:0`. All HTTP routes (including media endpoints)
+  work with auto-assigned ports.
+
+[0.2.1]: https://github.com/lutfi-zain/pi-finance-tracker/releases/tag/v0.2.1
+
+## [0.2.0] — 2026-06-12
 
 ### Added
 - **Groq media features** — 3 new `media_*` LLM tools and 7 new HTTP
