@@ -921,18 +921,22 @@ export async function startServer(
 	for (const port of candidates) {
 		if (tried.has(port)) continue;
 		tried.add(port);
-		const ok = await new Promise<boolean>((resolve) => {
+		const result = await new Promise<[boolean, number]>((resolve) => {
 			server.once("error", (err: NodeJS.ErrnoException) => {
-				if (err.code === "EADDRINUSE") resolve(false);
-				else resolve(false);
+				if (err.code === "EADDRINUSE") resolve([false, port]);
+				else resolve([false, port]);
 			});
-			server.listen(port, hostname, () => resolve(true));
+			server.listen(port, hostname, () => {
+				const addr = server.address();
+				resolve([true, typeof addr === "object" && addr ? addr.port : port]);
+			});
 		});
-		if (ok) {
-			const url = `http://${hostname}:${port}`;
+		if (result[0]) {
+			const actualPort = result[1];
+			const url = `http://${hostname}:${actualPort}`;
 			return {
 				url,
-				port,
+				port: actualPort,
 				hostname,
 				stop: () =>
 					new Promise<void>((resolve, reject) => {
